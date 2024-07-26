@@ -35,30 +35,32 @@
 
 //forward declarations
 struct spcl_val;
-struct spcl_inst;
+//struct spcl_inst;
 struct spcl_uf;
 struct spcl_fn_call;
+struct _vproc;
+typedef struct spcl_val spcl_val;
 
 //constants
-typedef struct spcl_val (*lib_call)(struct spcl_inst*, struct spcl_fn_call);
+typedef struct spcl_val (*lib_call)(struct spcl_fn_call, struct _vproc *vp);
 
 typedef enum { E_SUCCESS, E_NOFILE, E_LACK_TOKENS, E_BAD_SYNTAX, E_BAD_VALUE, E_BAD_TYPE, E_NOMEM, E_NAN, E_UNDEF, E_OUT_OF_RANGE, E_ASSERT, N_ERRORS } parse_ercode;
-typedef enum {VAL_UNDEF, VAL_ERR, VAL_NUM, VAL_STR, VAL_ARRAY, VAL_MAT, VAL_LIST, VAL_FN, VAL_INST, N_VALTYPES} valtype;
+typedef enum {VAL_UNDEF, VAL_ERR, VAL_INT, VAL_NUM, VAL_STR, VAL_ARRAY, VAL_MAT, VAL_LIST, VAL_FN, VAL_INST, _VAL_STACKREF, _VAL_GLOBREF, N_VALTYPES} valtype;
 //helper classes and things
 typedef enum {BLK_UNDEF, BLK_MISC, BLK_INVERT, BLK_TRANSFORM, BLK_DATA, BLK_ROOT, BLK_COMPOSITE, BLK_FUNC_DEC, BLK_LITERAL, BLK_COMMENT, BLK_SQUARE, BLK_QUOTE, BLK_QUOTE_SING, BLK_PAREN, BLK_CURLY, N_BLK_TYPES} blk_type;
 
 /**
  * Macro to set a value while automagically calculating the string length
  */
-#define spcl_set_val(INST, NAME, VAL, COPY) spcl_set_valn(INST, NAME, strlen(NAME), VAL, COPY)
+#define spcl_set_val(VP, NAME, VAL, COPY) spcl_set_valn(VP, NAME, strlen(NAME), VAL, COPY)
 #define make_spcl_fstream(NAME) make_spcl_fstreamn(NAME, strlen(NAME))
 /**
  * provides a handy macro which wraps get_sigerr and aborts execution of a function if an invalid signature was detected
  * FN_CALL: the name of the function
  * SIGNATURE: a constant array of valtypes. Each argument in the function FN_CALL is tested to make sure it is of the appropriate type. You may include VAL_UNDEF in this array as a wildcard
  */
-#define spcl_sigcheck(FN_CALL, SIGNATURE) \
-    spcl_val er = get_sigerr(FN_CALL, SIGLEN(SIGNATURE), SIGLEN(SIGNATURE), SIGNATURE); \
+#define spcl_sigcheck(FN_CALL, SIGNATURE, VP) \
+    spcl_val er = get_sigerr(FN_CALL, SIGLEN(SIGNATURE), SIGLEN(SIGNATURE), SIGNATURE, VP); \
     if (er.type == VAL_ERR) return er
 /**
  * Acts like SIGCHECK, but allows for optional arguments.
@@ -66,8 +68,8 @@ typedef enum {BLK_UNDEF, BLK_MISC, BLK_INVERT, BLK_TRANSFORM, BLK_DATA, BLK_ROOT
  * MIN_ARGS: the minimum number of arguments that may be accepted
  * SIGNATURE: the signature of all arguments, including optional ones
  */
-#define spcl_sigcheck_opts(FN_CALL, MIN_ARGS, SIGNATURE) \
-    spcl_val er = get_sigerr(FN_CALL, MIN_ARGS, SIGLEN(SIGNATURE), SIGNATURE); \
+#define spcl_sigcheck_opts(FN_CALL, MIN_ARGS, SIGNATURE, VP) \
+    spcl_val er = get_sigerr(FN_CALL, MIN_ARGS, SIGLEN(SIGNATURE), SIGNATURE, VP); \
     if (er.type == VAL_ERR) return er
 /**
  * register a function FN_CALL to the spcl_inst CON with the name NAME
@@ -75,7 +77,7 @@ typedef enum {BLK_UNDEF, BLK_MISC, BLK_INVERT, BLK_TRANSFORM, BLK_DATA, BLK_ROOT
  * FN_CALL: the C function to add
  * NAME: the name of the function when calling from a spcl script
  */
-#define spcl_add_fn(INST, FN_CALL, NAME) spcl_set_valn(INST, NAME, strlen(NAME), spcl_make_fn(NAME, 1, &FN_CALL), 0);
+#define spcl_add_fn(VP, FN_CALL, NAME) spcl_set_valn(VP, NAME, strlen(NAME), spcl_make_fn(NAME, 1, &FN_CALL, VP), 0);
 
 /** ======================================================== utility functions ======================================================== **/
 
@@ -91,60 +93,99 @@ int namecmp(const char* a, const char* b, size_t n);
  */
 int write_numeric(char* str, size_t n, double x);
 
-/** ============================ spcl_fstream ============================ **/
+/** ============================ arena allocator ============================ **/
 
-typedef struct spcl_fstream {
-    FILE* f;		//the file pointer to read from
-    psize flen;		//the length of the file
-    psize cst;		//the starting location of the cache in f. This is computed using ftell(f).
-    psize clen;		//the length of the cache in bytes
-    char* cache;	//a cache of the fstream near a given location
-} spcl_fstream;
+
+
+//macro to allocate a single instance of the type T on the arena a
+#define anew(a,T)	((T*)alloc(a, sizeof(T), 1, alignof(T)))
+//macro to allocate an array of n instances of the type T on the arena a
+#define anewa(a,T,n)	((T*)alloc(a, sizeof(T), n, alignof(T)))
+//get the size needed to hold n bytes, under the constraint that the number of bytes allocated must be an integer multiple of b
+#define holdsize(n,b)	(b*((n+b-1)/b))
+
+struct _vproc;
+
+typedef struct {
+    void *beg;		//the beginning of allocated memory
+    void *end;		//the end of allocated memory
+    void *head;		//the current head to insert to
+} arena;
 /**
- * Return a new spcl_fstream
- * p_fname: the filename to read
- * n: the length of the filename in bytes.
+ * Create and return an empty arena and allocate len bytes
  */
-spcl_fstream* make_spcl_fstreamn(const char* p_fname, size_t n);
+void init_arena(arena *a, psize len, struct _vproc *vp);
 /**
- * Free memory associated with the spcl_fstream fs.
- * fs: the fstream to destroy. This should be created with a call to make_spcl_fstream or copy_spcl_fstream as a call to free(fs) is made.
+ * Destroy memory used for the arena a
  */
-void destroy_spcl_fstream(spcl_fstream* fs);
+void cleanup_arena(arena *a, struct _vproc *vp);
 /**
- * Find the line that the location s resides on.
+ * Allocate a count elements of length len (aligned to align) on the arena a. For instance, to allocate an array T arr[n] you would pass `T* arr = alloc(a, sizeof(T), n, alignof(T));`
+ * a: the arena to allocate to
+ * size: the size of each element.
+ * count: the number of elements to allocate
+ * align: the alignment in memory of the type you want (MUST be a power of two)
+ * returns: an (uninitialized) pointer to the region of memory allocated. This is gauranteed to be aligned to have an address divisible by align bytes
  */
-psize fs_find_line(const spcl_fstream* fs, psize s);
+void *alloc(arena *a, psize size, psize count, psize align);
 /**
- * Find the index of the end of the file.
+ * Deallocate size bytes from the arena a
  */
-psize fs_end(const spcl_fstream* fs);
+void dealloc(arena *a, psize size);
 /**
- * Find the first line end after the index s.
+ * Reset the arena and deallocate all memory
  */
-psize fs_line_end(const spcl_fstream* fs, psize s);
+void reset(arena *a);
+
+/** ============================ vproc ============================ **/
+
+typedef struct {
+    s8 name;
+    psize sp;
+} hash_item;
+
+//a virtual process
+typedef struct _vproc {
+    void *heap;
+    spcl_val *stack;
+    struct spcl_inst *c;
+    arena a;
+    usize pc;		//program counter
+    psize sp;		//stack pointer
+} vproc;
+
 /**
- * Append the line str to the end of the fstream fs
- * fs: the fstream to modify
- * str: the line to append
+ * Setup a new virtual process along with its own callstack and registers.
  */
-void spcl_fstream_append(spcl_fstream* fs, const char* str);
-#if SPCL_DEBUG_LVL>0
+vproc *make_vproc();
 /**
- * Return a string with the line contained between indices b (inclusive) and e (not inclusive).
- * fs: the spcl_fstream to read
- * b: the beginning to read from
- * e: read up to this character unless e <= b in which case reading goes to the end of the line
- * returns: a string with the contents between b and e. This string should be freed with a call to free().
+ * destroy the virtual process pointed to by vp and deallocate its memory
  */
-char* fs_get_line(const spcl_fstream* fs, psize b, psize e, size_t* len);
+void destroy_vproc(vproc *vp);
 /**
- * Returns a version of the line buffer which is flattened so that everything fits onto one line.
- * sep_char: each newline in the buffer is replaced by a sep_char, unless sep_char=0 in which no characters are inserted
- * len: a pointer which if not null will hold the length of the string including the null terminator
+ * execute the instructions at insts[n_insts]
  */
-char* fs_flatten(const spcl_fstream* fs, char sep_char, size_t* len);
-#endif
+spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts);
+/**
+ * Helper function which converts an instruction to a pointer to a spcl_val. This function does not perform any allocations, it simply looks up.
+ * inst_loc: either L_LIT, L_REG, L_STK, or L_HEP to indicate which sector to look in
+ * inst: the instruction to convert
+ */
+spcl_local spcl_val* _val_from_inst(vproc *vp, short inst_loc, usize inst, spcl_val *sto);
+/**
+ * Given a string str, return a spcl_val corresponding to the expression str
+ * c: the spcl_inst to use when looking for variables and functions
+ * str: the string expression to parse
+ * returns: a spcl_val with the resultant expression
+ */
+spcl_val spcl_parse_line(vproc *vp, const char* str);
+/**
+ * Test whether the string str evaluates to true when using c.
+ * c: the spcl_inst to use when looking for variables and functions
+ * str: the string expression to parse
+ * returns: 0 if str evaluated to false or an error occurred during parsing. Otherwise, 1 is returned.
+ */
+int spcl_test(vproc *vp, const char* str);
 
 /** ============================ struct spcl_val ============================ **/
 
@@ -156,6 +197,7 @@ typedef struct spcl_error {
 union V {
     spcl_error* e;
     char* s;
+    int i;
     double x;
     double* a;
     struct spcl_val* l;
@@ -168,7 +210,6 @@ struct spcl_val {
     union V val;
     size_t n_els; //only applicable for string and list types
 };
-typedef struct spcl_val spcl_val;
 
 /**
  * create an empty spcl_val
@@ -180,7 +221,11 @@ spcl_val spcl_make_none();
  * format: a format specifier (just like printf)
  * returns: a pointer to an error object with the specified, which should be deallocated with a call to free()
  */
-spcl_val spcl_make_err(parse_ercode code, const char* format, ...);
+spcl_val spcl_make_err(parse_ercode code, vproc *vp, const char* format, ...);
+/**
+ * create a spcl_val from an int
+ */
+spcl_val spcl_make_int(int x);
 /**
  * create a spcl_val from a float
  */
@@ -188,30 +233,30 @@ spcl_val spcl_make_num(double x);
 /**
  * create a spcl_val from a string
  */
-spcl_val spcl_make_str(const char* s, size_t n);
+spcl_val spcl_make_str(const char* s, psize n, vproc *vp);
 /**
  * create a spcl_val from a c array of doubles
  */
-spcl_val spcl_make_array(double* vs, size_t n);
+spcl_val spcl_make_array(double* vs, size_t n, vproc *vp);
 /**
  * create a spcl_val from a list
  */
-spcl_val spcl_make_list(const spcl_val* vs, size_t n_vs);
+spcl_val spcl_make_list(const spcl_val* vs, size_t n_vs, vproc *vp);
 /**
  * Add a new callable function with the signature sig and function pointer corresponding to the executed code. This function must accept a function and a pointer to an error code and return a spcl_val.
  */
-spcl_val spcl_make_fn(const char* name, size_t n_args, spcl_val (*p_exec)(struct spcl_inst*, struct spcl_fn_call));
+spcl_val spcl_make_fn(const char* name, size_t n_args, lib_call p_exec, vproc *vp);
 /**
  * make an instance object with the given type
  * p: the parent of the current instance (i.e. its owner
  * s: the name of the type
  */
-spcl_val spcl_make_inst(struct spcl_inst* parent, const char* s);
+spcl_val spcl_make_inst(struct spcl_inst* parent, const char* s, vproc *vp);
 /**
  * Compare two spcl_vals if appropriate, in a manner similar to strcmp.
  * returns: 0 if a==b, a positive spcl_val if a>b, and a negative spcl_val if a<b. If no comparison is possible, undefined is returned.
  */
-spcl_val spcl_valcmp(spcl_val a, spcl_val b);
+spcl_val spcl_valcmp(spcl_val a, spcl_val b, vproc *vp);
 /**
  * Convert a spcl_val to a string representation.
  * v: the spcl_val to convert to a string
@@ -226,16 +271,15 @@ char* spcl_stringify(spcl_val v, char* buf, size_t n);
  * type: the type to cast v to
  * returns: a spcl_val with the specified type or an error spcl_val if the cast was impossible
  */
-spcl_val spcl_cast(spcl_val v, valtype type);
+spcl_val spcl_cast(spcl_val v, valtype type, vproc *vp);
 /**
  * check if the spcl_val has a type matching the typename str
  */
-void cleanup_spcl_val(spcl_val* o);
+void cleanup_spcl_val(spcl_val* o, vproc *vp);
 /**
  * create a new spcl_val which is a deep copy of o
  */
-spcl_val copy_spcl_val(const spcl_val o);
-
+spcl_val copy_spcl_val(const spcl_val o, vproc *vp);
 /**
  * This function behaves identically to strcmp, except it uses the internal string representatation for speclang. (strings are fat pointers as opposed to null terminated)
  */
@@ -256,7 +300,7 @@ void print_hierarchy(spcl_val v, FILE* f, size_t depth);
  * str+*: append the string representation of the type * to str
  */
 // spcl_val operations
-void val_add(spcl_val* l, spcl_val r);
+void val_add(spcl_val* l, spcl_val r, vproc *vp);
 /**
  * Add two spcl_vals together, overwriting the result to l
  * num+num: arithmetic
@@ -264,7 +308,7 @@ void val_add(spcl_val* l, spcl_val r);
  * array-num: subtract number from each element
  * mat-mat: matrix subtraction
  */
-void val_sub(spcl_val* l, spcl_val r);
+void val_sub(spcl_val* l, spcl_val r, vproc *vp);
 /**
  * Add two spcl_vals together, overwriting the result to l
  * num*num: arithmetic
@@ -272,7 +316,7 @@ void val_sub(spcl_val* l, spcl_val r);
  * array*num: multiply each element by a number
  * mat*mat: piecewise matrix multiplication (NOT matrix multiplication)
  */
-void val_mul(spcl_val* l, spcl_val r);
+void val_mul(spcl_val* l, spcl_val r, vproc *vp);
 /**
  * compute l/r
  * num/num: arithmetic
@@ -280,7 +324,7 @@ void val_mul(spcl_val* l, spcl_val r);
  * array/num: divide each element by a number
  * mat/mat: piecewise matrix multiplication
  */
-void val_div(spcl_val* l, spcl_val r);
+void val_div(spcl_val* l, spcl_val r, vproc *vp);
 /**
  * compute the remainder of l/r
  * num/num: arithmetic
@@ -288,7 +332,7 @@ void val_div(spcl_val* l, spcl_val r);
  * array/num: divide each element by a number
  * mat/mat: piecewise matrix multiplication
  */
-void val_mod(spcl_val* l, spcl_val r);
+void val_mod(spcl_val* l, spcl_val r, vproc *vp);
 /**
  * raise l^r
  * num/num: arithmetic
@@ -296,7 +340,7 @@ void val_mod(spcl_val* l, spcl_val r);
  * array/num: divide each element by a number
  * mat/mat: piecewise matrix multiplication
  */
-void val_exp(spcl_val* l, spcl_val r);
+void val_exp(spcl_val* l, spcl_val r, vproc *vp);
 #endif
 
 /** ============================ spcl_fn_call ============================ **/
@@ -333,51 +377,32 @@ struct spcl_inst {
 typedef struct spcl_inst spcl_inst;
 
 /**
- * helper struct for struct spcl_inst objects which stores information read from a file
- */
-typedef struct read_state {
-    const spcl_fstream* b;
-    psize start;
-    psize end;
-} read_state;
-/**
  * Constructor for a new spcl_inst initialized with the contents of fname and optional command line arguments
  * fname: the name of the file to read
  * argc: the number arguments
  * argv: an array of arguments taken from the command-line. Note that callers should not directly pass argc,argv from int main(). Rather, argv should only include valid spclang commands. If you know that spclang commands start at the index i, then you should call spcl_inst_from_file(fname, argc-i, argv+(size_t)i).
- * returns: on success, the return type is a VAL_INST and return.val.c is a valid instance. On an error parsing 
+ * returns: on success, a pointer to a vproc which should be destroyed with a call to destroy_vproc, otherwise NULL is returned and destroy_vproc() is still safe
  */
-spcl_val spcl_inst_from_file(const char* fname, int argc, const char** argv);
+vproc *spcl_read_file(const char* fname, int argc, const char** argv);
 /**
  * make an empty spcl_inst. The result must be destroyed using destroy_inst().
  * parent: the parent of this spcl_inst so that we can look up in scope (i.e. a function can access global variables)
  */
-struct spcl_inst* make_spcl_inst(spcl_inst* parent);
+struct spcl_inst* make_spcl_inst(spcl_inst* parent, vproc *vp);
 /**
  * Create a deep copy of the spcl_inst o and return the result. The result must be destroyed using destroy_inst().
  */
-struct spcl_inst* copy_spcl_inst(const spcl_inst* o);
+struct spcl_inst* copy_spcl_inst(const spcl_inst* o, vproc *vp);
 /**
  * cleanup the spcl_inst c
  */
-void destroy_spcl_inst(spcl_inst* c);
-/**
- * Execute the mathematical operation in the string str at the location op_ind
- */
-#if SPCL_DEBUG_LVL>0
-typedef enum { KEY_NONE, KEY_IMPORT, KEY_CLASS, KEY_IF, KEY_FOR, KEY_ELSE, KEY_WHILE, KEY_BREAK, KEY_CONT, KEY_RET, KEY_FN, SPCL_N_KEYS } spcl_key;
-s8 fs_read(const spcl_fstream* fs, psize s, psize e);
-spcl_val do_op(struct spcl_inst* c, read_state rs, psize op_loc, psize* new_end, spcl_key key);
-read_state make_read_state(const spcl_fstream* fs, psize s, psize e);
-spcl_key get_keyword(read_state* rs);
-spcl_val find_operator(read_state rs, psize* op_loc, psize* open_ind, psize* close_ind, psize* new_end);
-#endif
+void destroy_spcl_inst(spcl_inst* c, vproc *vp);
 /**
  * Search the spcl_inst for the variable with the matching name.
  * name: the name of the variable to set
  * returns: the matching spcl_val, no deep copies are performed
  */
-spcl_val spcl_find(const struct spcl_inst* c, const char* name);
+//spcl_val spcl_find(const struct spcl_inst* c, const char* name);
 /**
  * Lookup the object named str in c and save the resulting spcl_inst to sto
  * c: the spcl_inst to search
@@ -386,7 +411,7 @@ spcl_val spcl_find(const struct spcl_inst* c, const char* name);
  * sto: overwrite this information to save
  * returns: 0 on success or a negative spcl_val if an error occurred (-1 indicates no match, -2 indicates match of the wrong type)
  */
-int spcl_find_object(const spcl_inst* c, const char* str, const char* type, spcl_inst** sto);
+int spcl_find_object(vproc *vp, const char* str, const char* type, spcl_inst** sto);
 /**
  * Lookup the spcl_val named str in c and write the first n elements of the resulting list/array to sto
  * c: the spcl_inst to search
@@ -395,7 +420,7 @@ int spcl_find_object(const spcl_inst* c, const char* str, const char* type, spcl
  * n: the length of sto
  * returns: the number of elements written on success or a negative spcl_val if an error occurred (-1 indicates no match, -2 indicates match of the wrong type, -3 indicates an invalid element)
  */
-int spcl_find_c_iarray(const spcl_inst* c, const char* str, int* sto, size_t n);
+int spcl_find_c_iarray(vproc *vp, const char* str, int* sto, size_t n);
 /**
  * Lookup the spcl_val named str in c and write the first n elements of the resulting list/array to sto
  * c: the spcl_inst to search
@@ -404,7 +429,7 @@ int spcl_find_c_iarray(const spcl_inst* c, const char* str, int* sto, size_t n);
  * n: the length of sto
  * returns: the number of elements written on success or a negative spcl_val if an error occurred (-1 indicates no match, -2 indicates match of the wrong type, -3 indicates an invalid element)
  */
-int spcl_find_c_uarray(const spcl_inst* c, const char* str, unsigned* sto, size_t n);
+int spcl_find_c_uarray(vproc *vp, const char* str, unsigned* sto, size_t n);
 /**
  * Lookup the spcl_val named str in c and write the first n elements of the resulting list/array to sto
  * c: the spcl_inst to search
@@ -413,31 +438,31 @@ int spcl_find_c_uarray(const spcl_inst* c, const char* str, unsigned* sto, size_
  * n: the length of sto
  * returns: the number of elements written on success or a negative spcl_val if an error occurred (-1 indicates no match, -2 indicates match of the wrong type, -3 indicates an invalid element)
  */
-int spcl_find_c_darray(const spcl_inst* c, const char* str, double* sto, size_t n);
+int spcl_find_c_darray(vproc *vp, const char* str, double* sto, size_t n);
 /**
  * Lookup the spcl_val named str in c and write the string sto
  * c: the spcl_inst to search
  * str: the name to lookup
- * sto: the array to save to
+ * sto: the array to save to (this is guaranteed to be null terminated after a call)
  * n: the length of sto
  * returns: the number of elements written on success or a negative spcl_val if an error occurred (-1 indicates no match, -2 indicates match of the wrong type, -3 indicates an invalid element)
  */
-int spcl_find_c_str(const spcl_inst* c, const char* str, char* sto, size_t n);
+int spcl_find_c_str(vproc *vp, const char* str, char* sto, size_t n);
 /**
  * lookup the integer spcl_val in c at str and save to sto.
  * returns: 0 on success or -1 if the name str couldn't be found
  */
-int spcl_find_int(const spcl_inst* c, const char* str, int* sto);
+int spcl_find_int(vproc *vp, const char* str, int* sto);
 /**
  * lookup the unsigned integer spcl_val in c at str and save to sto.
  * returns: 0 on success or -1 if the name str couldn't be found
  */
-int spcl_find_uint(const spcl_inst* c, const char* str, unsigned* sto);
+int spcl_find_uint(vproc *vp, const char* str, unsigned* sto);
 /**
  * lookup the floating point spcl_val in c at str and save to sto.
  * returns: 0 on success or -1 if the name str couldn't be found
  */
-int spcl_find_float(const spcl_inst* c, const char* str, double* sto);
+int spcl_find_float(vproc *vp, const char* str, double* sto);
 /**
  * Set the spcl_val with a name matching p_name to a copy of p_val.
  * name: the name of the variable to set
@@ -446,103 +471,6 @@ int spcl_find_float(const spcl_inst* c, const char* str, double* sto);
  * copy: This is a boolean which, if true, performs a deep copy of new_val. Otherwise, only a shallow copy (move) is performed.
  * move_assign: If set to true, then the spcl_val is directly moved into the spcl_inst. This can save some time.
  */
-void spcl_set_valn(struct spcl_inst* c, const char* name, size_t namelen, spcl_val new_val, int copy);
-/**
- * Given a string str, return a spcl_val corresponding to the expression str
- * c: the spcl_inst to use when looking for variables and functions
- * str: the string expression to parse
- * returns: a spcl_val with the resultant expression
- */
-spcl_val spcl_parse_line(struct spcl_inst* c, const char* str);
-/**
- * Test whether the string str evaluates to true when using c.
- * c: the spcl_inst to use when looking for variables and functions
- * str: the string expression to parse
- * returns: 0 if str evaluated to false or an error occurred during parsing. Otherwise, 1 is returned.
- */
-int spcl_test(struct spcl_inst* c, const char* str);
-/**
- * Generate a spcl_inst from a list of lines. This spcl_inst will include function declarations, named variables, and subinstances.
- * lines: the array of lines to read from
- * n_lines: the size of the array
- * returns: an error if one was found or an undefined spcl_val on success
- */
-spcl_val spcl_read_lines(struct spcl_inst* c, const spcl_fstream* b);
-
-/** ============================ spcl_uf ============================ **/
-
-/**
- * A class for functions defined by the user along with the implementation code
- */
-typedef struct spcl_uf {
-    spcl_fn_call call_sig;
-    read_state code_lines;
-    spcl_val (*exec)(spcl_inst*, spcl_fn_call);
-    spcl_inst* fn_scope;
-} spcl_uf;
-
-/**
- * constructor
- * sig: this specifies the signature of the function used when calling it
- * bufptr: a buffer to be used for line reading
- * n: the number of characters currently in the buffer
- * fp: the file pointer to read from
- */
-spcl_uf* make_spcl_uf_ex(spcl_val (*p_exec)(spcl_inst*, spcl_fn_call));
-/**
- * create a deep copy of the user_func o and return it. The result must be destroyed using cleanup_user_func.
- */
-spcl_uf* copy_spcl_uf(const spcl_uf* o);
-/**
- * Dealocate memory used for uf
- */
-void destroy_spcl_uf(spcl_uf* uf);
-/**
- * evaluate the function
- */
-spcl_val spcl_uf_eval(spcl_uf* uf, spcl_inst* c, spcl_fn_call call);
-
-/** ============================ builtin functions ============================ **/
-/**
- * Ensure that the function call f has at least min_args arguments and at most max_args. Then ensure that the first f.n_args arguments match the signature sig
- * f: the function call to interpret
- * min_args: f.n_args must be >= min_args or an error is returned
- * max_args: f.n_args must be <= max_args or an error is returned. Undefined behaviour may occur if max_args<min_args.
- * sig: the first f.n_args arguments in f (assuming min_args<=f.n_args<max_args) must match the specified signature. This array must be large enough to hold max_args
- * returns: an error with an appropriate message or undefined if there was no error
- */
-spcl_val get_sigerr(spcl_fn_call f, size_t min_args, size_t max_args, const valtype* sig);
-/**
- * assert(boolean, optional string message): If the first argument is false, return an error with the specified message. Otherwise, return 1.
- */
-spcl_val spcl_assert(struct spcl_inst* c, spcl_fn_call tmp_f);
-/**
- * Return true if the argument is defined, false otherwise.
- */
-spcl_val spcl_isdef(struct spcl_inst* c, spcl_fn_call tmp_f);
-/**
- * Get the type of a spcl_val
- */
-spcl_val spcl_typeof(struct spcl_inst* c, spcl_fn_call tmp_f);
-/**
- * Make a range following python syntax. If one argument is supplied then a list with tmp_f.args[0] elements is created starting at index 0 and going up to (but not including) tmp_f.args[0]. If two arguments are supplied then the range is from (tmp_f.args[0], tmp_f.args[1]). If three arguments are supplied then the range (tmp_f.args[0], tmp_f.args[1]) is still returned, but now the spacing between successive elements is tmp_f.args[2].
- */
-spcl_val spcl_range(struct spcl_inst* c, spcl_fn_call tmp_f);
-/**
- * linspace(a, b, n) Create a list of n equally spaced real numbers starting at a and ending at b. This function must be called with three aguments unlike np.linspace. Note that the spcl_val b is included in the list
- */
-spcl_val spcl_linspace(struct spcl_inst* c, spcl_fn_call tmp_f);
-/**
- * Take a list spcl_val and flatten it so that it has numpy dimensions (n) where n is the sum of the length of each list in the base list. spcl_vals are copied in order e.g flatten([0,1],[2,3]) -> [0,1,2,3]
- * spcl_fn_call: the function with arguments passed
- */
-spcl_val spcl_flatten(struct spcl_inst* c, spcl_fn_call tmp_f);
-/**
- * Take a list spcl_val and flatten it so that it has numpy dimensions (n) where n is the sum of the length of each list in the base list. spcl_vals are copied in order e.g flatten([0,1],[2,3]) -> [0,1,2,3]
- * spcl_fn_call: the function with arguments passed
- */
-spcl_val spcl_cat(struct spcl_inst* c, spcl_fn_call tmp_f);
-spcl_val spcl_print(struct spcl_inst* c, spcl_fn_call tmp_f);
-spcl_val errtype(struct spcl_inst* c, spcl_fn_call tmp_f);
+void spcl_set_valn(vproc *vp, char* name, size_t namelen, spcl_val new_val, int copy);
 
 #endif //READ_H

@@ -15,11 +15,11 @@ int main(int argc, const char** argv) {
 	argv = NULL;
     }
     //actually call
-    spcl_val v = spcl_inst_from_file(fname, argc, argv);
+    /*spcl_val v = spcl_inst_from_file(fname, argc, argv);
     if (v.type == VAL_ERR) {
 	cleanup_spcl_val(&v);
 	return 1;
     }
     cleanup_spcl_val(&v);
-    return 0;
+    return 0;*/
 }
