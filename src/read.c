@@ -8,9 +8,9 @@ static const char* const errnames[N_ERRORS] =
 static const char* const valnames[N_VALTYPES] = {"none", "error", "numeric", "string", "array", "list", "fn", "obj"};
 
 //aliases for optree operations
-static const s8 OP_ALIAS[]  = {s8(""), s8("+"), s8("-"), s8("*"), s8("/"), s8("%"), s8("**"), s8("|"), s8("&"), s8("<<"), s8(">>"), s8("=="), s8("!="), s8(">"), s8("<"), s8(">="), s8("<="), s8("!"), s8("||"), s8("&&"), s8("++"), s8("--"), s8("in"), s8("is"), s8("?"), s8("()"), s8("{}"), s8("="), s8("()"), s8(","), s8("["), s8("["), s8("if"), s8("for"), s8("while"), s8(".")};
-static const int OP_PRECS[] = {0, 4, 4, 3, 3, 3, 2, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 8, 8, 8, 4, 4, 9, 10, 1, 1, 1, 12, 9, 8, 1, 1, 10, 10, 10, 1};
-static const int OP_LENS[] = {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 2, 3, 3, 2, 2, 2, 2, 4, 2, 3, 3, 3, 2, 3, 3, 2, 3, 3, 3, 2, 2, 2, 1, 3, 3, 3, 3, 1, 1, 4, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
+static const s8 OP_ALIAS[]  = {s8(""), s8("+"), s8("-"), s8("*"), s8("/"), s8("%"), s8("**"), s8("|"), s8("&"), s8("<<"), s8(">>"), s8("=="), s8("!="), s8(">"), s8("<"), s8(">="), s8("<="), s8("!"), s8("||"), s8("&&"), s8("++"), s8("--"), s8("in"), s8("is"), s8("?"), s8("()"), s8("{}"), s8("="), s8("()"), s8(","), s8("["), s8("["), s8("if"), s8("for"), s8("while"), s8("."), s8("?"), s8(":")};
+static const int OP_PRECS[] = {0, 4, 4, 3, 3, 3, 2, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 8, 8, 8, 4, 4, 9, 10, 1, 1, 1, 12, 9, 8, 1, 1, 10, 10, 10, 1, 2, 1};
+static const int OP_LENS[] = {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 2, 3, 3, 2, 2, 2, 2, 4, 2, 3, 3, 3, 2, 3, 2, 3, 3, 2, 3, 3, 2, 2, 2, 1, 3, 3, 3, 3, 1, 1, 4, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
 
 #define spcl_isfalse(v) (v.type == VAL_UNDEF || (v.type == VAL_INT && v.val.i == 0) || v.n_els == 0)
 #define spcl_istrue(v) (!spcl_isfalse(v))
@@ -99,6 +99,8 @@ static inline optr_op name_to_op(spcl_fstream *fs, psize pos) {
     case '|': return OPTR_BOR;
     case ',': return OPTR_APPND;
     case '.': return OPTR_DREF;
+    case '?': return OPTR_TRNQ;
+    case ':': return OPTR_TRNC;
     case 'f': return (fs_get(fs,pos+1)=='o' && fs_get(fs,pos+2)=='r' && is_whitespace(fs_get(fs,pos+3)))? OPTR_FOR : 0;
     default: break;
     }
@@ -307,7 +309,11 @@ static inline void *make_heapblk(size_t n, size_t imsize) {
  * Allocate memory for the process vp
  */
 static inline void *xmalloc(size_t n, vproc *vp) {
-    heapblk *hp = (heapblk*)vp->heap;
+    void *tmp = malloc(n);
+    if (!tmp)
+	exit(1);
+    return tmp;
+    /*heapblk *hp = (heapblk*)vp->heap;
     freeblk **stonxt = &(hp->first);
     freeblk *blk = hp->first;
     while (hp->next) {
@@ -353,10 +359,14 @@ static inline void *xmalloc(size_t n, vproc *vp) {
     char *ret = (char*)hp->next + sizeof(heapblk);
     //finally we may do the immediate allocation
     ((usize*)ret)[0] = (char*)hp->next->first - ret;
-    return hp->next + sizeof(heapblk) + sizeof(usize); 
+    return hp->next + sizeof(heapblk) + sizeof(usize);*/
 }
 static inline void *xrealloc(void *p, size_t n, vproc *vp) {
-    heapblk *hp = (heapblk*)vp->heap;
+    void *tmp = realloc(p, n);
+    if (!tmp)
+	exit(1);
+    return tmp;
+    /*heapblk *hp = (heapblk*)vp->heap;
     //TODO: something better
     if (n >= SIZE_MAX/4) {
 	fprintf(stderr, "Ran out of memory!\n");
@@ -369,15 +379,17 @@ static inline void *xrealloc(void *p, size_t n, vproc *vp) {
     b->next = hp->first;
     hp->first = b;
 
-    return tmp;
+    return tmp;*/
 }
 static inline void xfree(void* p, vproc *vp) {
-    heapblk *hp = (heapblk*)vp->heap;
+    free(p);
+    /*heapblk *hp = (heapblk*)vp->heap;
     freeblk *b = (freeblk*)p;
     b->len = *((usize*)p);
     b->next = hp->first;
-    hp->first = b;
-}/** ============================ arena allocator ============================ **/
+    hp->first = b;*/
+}
+/** ============================ arena allocator ============================ **/
 
 void init_arena(arena *a, psize len, vproc *vp) {
     a->beg = xmalloc(len, vp);
@@ -616,27 +628,22 @@ spcl_val spcl_assert(spcl_fn_call f, vproc *vp) {
 	return (f.n_args == 1)? spcl_make_err(E_ASSERT, vp, "") : spcl_make_err(E_ASSERT, vp, "%s", f.args[1].val.s);
     return spcl_make_num(f.args[0].val.x);
 }
-/*TODO: fix
- * spcl_val spcl_typeof(spcl_fn_call f, vproc *vp) {
+
+spcl_val spcl_typeof(spcl_fn_call f, vproc *vp) {
     spcl_sigcheck(f, ANY1_SIG, vp);
     spcl_val sto = (spcl_val){0};
     sto.type = VAL_STR;
     //handle instances as a special case
     if (f.args[0].type == VAL_INST) {
-	spcl_val t = spcl_find(f.args[0].val.c, "__type__");
-	if (t.type == VAL_STR) {
-	    sto.n_els = t.n_els;
-	    sto.val.s = xmalloc(sizeof(char)*(sto.n_els+1), vp);
-	    memcpy(sto.val.s, t.val.s, sto.n_els);
-	    sto.val.s[sto.n_els] = 0;
-	    return sto;
-	}
+	spcl_val t = spcl_find(f.args[0].val.c, s8("__type__"));
+	if (t.type == VAL_STR)
+	    return t;
 	return spcl_make_none();
     }
     sto.n_els = strlen(valnames[f.args[0].type])+1;
-    sto.val.s = strdup(valnames[f.args[0].type]);
+    sto.val.s = valnames[f.args[0].type];
     return sto;
-}*/
+}
 spcl_val spcl_len(spcl_fn_call f, vproc *vp) {
     spcl_sigcheck(f, ANY1_SIG, vp);
     return spcl_make_num(f.args[0].n_els);
@@ -1096,10 +1103,10 @@ spcl_val spcl_make_list(const spcl_val* vs, size_t n_vs, vproc *vp) {
     for (size_t i = 0; i < v.n_els; ++i) v.val.l[i] = copy_spcl_val(vs[i], vp);
     return v;
 }
-spcl_val spcl_make_fn(const char* name, size_t n_args, lib_call p_exec, vproc *vp) {
+spcl_val spcl_make_fn(const char* name, psize n_ret, lib_call p_exec, vproc *vp) {
     spcl_val ret;
     ret.type = VAL_FN;
-    ret.n_els = n_args;
+    ret.n_els = n_ret;
     ret.val.f = make_spcl_uf_ex(p_exec, vp);
     return ret;
 }
@@ -1109,7 +1116,7 @@ spcl_val spcl_make_inst(spcl_inst* parent, const char* s, vproc *vp) {
     v.val.c = make_spcl_inst(parent, vp);
     if (s && s[0] != 0) {
 	spcl_val tmp = spcl_make_str(s, strlen(s), vp);
-	spcl_set_val(vp, "__type__", tmp, 0);
+	spcl_set_sub_val(v.val.c, "__type__", tmp, 0, vp);
     }
     return v;
 }
@@ -1554,8 +1561,16 @@ spcl_local void val_mul(spcl_val* l, spcl_val r, vproc *vp) {
 }
 spcl_local void val_div(spcl_val* l, spcl_val r, vproc *vp) {
     if (l->type == VAL_INT && r.type == VAL_INT) {
+	if (r.val.i == 0) {
+	    *l = spcl_make_err(E_BAD_VALUE, vp, "division by zero");
+	    return;
+	}
 	*l = spcl_make_int( (l->val.i)/(r.val.i) );
     } else if (l->type == VAL_NUM && r.type == VAL_INT) {
+	if (r.val.i == 0) {
+	    *l = spcl_make_err(E_BAD_VALUE, vp, "division by zero");
+	    return;
+	}
 	*l = spcl_make_num( (l->val.x)/(r.val.i) );
     } else if (l->type == VAL_INT && r.type == VAL_NUM) {
 	*l = spcl_make_num( (l->val.i)/(r.val.x) );
@@ -1796,43 +1811,43 @@ static inline int grow_inst(struct spcl_inst* c, vproc *vp) {
  * include builtin functions
  * TODO: make this not dumb
  */
-/*static inline void setup_builtins(struct spcl_inst* c) {
+static inline void setup_builtins(vproc *vp) {
     //create builtins
-    spcl_set_val(c, "false",	spcl_make_num(0), 0);
-    spcl_set_val(c, "true",	spcl_make_num(1), 0);//create horrible (if amusing bugs when someone tries to assign to true or false
-    spcl_add_fn(c, spcl_assert,		"assert");
-    spcl_add_fn(c, spcl_typeof,		"typeof");
-    spcl_add_fn(c, spcl_len,		"len");
-    spcl_add_fn(c, spcl_list,		"list");
-    spcl_add_fn(c, spcl_range,		"range");
-    spcl_add_fn(c, spcl_linspace,	"linspace");
-    spcl_add_fn(c, spcl_flatten,	"flatten");
-    spcl_add_fn(c, spcl_array,		"array");
-    spcl_add_fn(c, spcl_vec,		"vec");
-    spcl_add_fn(c, spcl_cat,		"cat");
-    spcl_add_fn(c, spcl_print,		"print");
+    /*spcl_set_val(vp, "false",	spcl_make_num(0), 0);
+    spcl_set_val(vp, "true",	spcl_make_num(1), 0);//create horrible (if amusing bugs when someone tries to assign to true or false*/
+    spcl_add_fn(spcl_assert,	"assert", vp);
+    spcl_add_fn(spcl_typeof,	"typeof", vp);
+    spcl_add_fn(spcl_len,	"len", vp);
+    spcl_add_fn(spcl_list,	"list", vp);
+    spcl_add_fn(spcl_range,	"range", vp);
+    spcl_add_fn(spcl_linspace,	"linspace", vp);
+    spcl_add_fn(spcl_flatten,	"flatten", vp);
+    spcl_add_fn(spcl_array,	"array", vp);
+    spcl_add_fn(spcl_vec,	"vec", vp);
+    spcl_add_fn(spcl_cat,	"cat", vp);
+    spcl_add_fn(spcl_print,	"print", vp);
     //TODO: this is a really dumb way of adding namespaces
     //math stuff
-    spcl_val tmp = spcl_make_inst(c, "math");
+    spcl_val tmp = spcl_make_inst(vp->c, "math", vp);
     spcl_inst* math_c = tmp.val.c;
-    spcl_set_val(math_c, "pi", 	spcl_make_num(M_PI), 0);
-    spcl_set_val(math_c, "e", 	spcl_make_num(M_E), 0);
-    spcl_add_fn(math_c, spcl_sin,	"sin");
-    spcl_add_fn(math_c, spcl_cos,	"cos");
-    spcl_add_fn(math_c, spcl_tan,	"tan");
-    spcl_add_fn(math_c, spcl_asin,	"asin");
-    spcl_add_fn(math_c, spcl_acos,	"acos");
-    spcl_add_fn(math_c, spcl_atan,	"atan");
-    spcl_add_fn(math_c, spcl_exp,	"exp");
-    spcl_add_fn(math_c, spcl_log,	"log");
-    spcl_add_fn(math_c, spcl_sqrt,	"sqrt");
-    spcl_add_fn(math_c, spcl_floor,	"floor");
-    spcl_add_fn(math_c, spcl_ceil,	"ceil");
-    spcl_add_fn(math_c, spcl_fabs,	"abs");
-    spcl_set_val(c, "math", tmp, 0);
-    tmp = spcl_make_inst(c, "sys");
-    spcl_set_val(c, "sys", tmp, 0);
-}*/
+    spcl_set_sub_val(math_c, "pi", 	spcl_make_num(M_PI), 0, vp);
+    spcl_set_sub_val(math_c, "e", 	spcl_make_num(M_E), 0, vp);
+    spcl_add_sub_fn(math_c, spcl_sin,	"sin", vp);
+    spcl_add_sub_fn(math_c, spcl_cos,	"cos", vp);
+    spcl_add_sub_fn(math_c, spcl_tan,	"tan", vp);
+    spcl_add_sub_fn(math_c, spcl_asin,	"asin", vp);
+    spcl_add_sub_fn(math_c, spcl_acos,	"acos", vp);
+    spcl_add_sub_fn(math_c, spcl_atan,	"atan", vp);
+    spcl_add_sub_fn(math_c, spcl_exp,	"exp", vp);
+    spcl_add_sub_fn(math_c, spcl_log,	"log", vp);
+    spcl_add_sub_fn(math_c, spcl_sqrt,	"sqrt", vp);
+    spcl_add_sub_fn(math_c, spcl_floor,	"floor", vp);
+    spcl_add_sub_fn(math_c, spcl_ceil,	"ceil", vp);
+    spcl_add_sub_fn(math_c, spcl_fabs,	"abs", vp);
+    spcl_set_val("math", tmp, 0, vp);
+    tmp = spcl_make_inst(vp->c, "sys", vp);
+    spcl_set_val("sys", tmp, 0, vp);
+}
 
 struct spcl_inst* make_spcl_inst(spcl_inst* parent, vproc *vp) {
     spcl_inst* c = xmalloc(sizeof(spcl_inst), vp);
@@ -2092,6 +2107,10 @@ static inline psize _read_next(vproc *vp, read_state rs, optree_nd *nd, spcl_val
     } else if (c == BEG_PAR || c == BEG_CRL || c == BEG_SQR) {
 	psize old_end = rs.end;
 	rs.end = strchr_block_rs(rs.b, rs.start, rs.end, get_match(c));
+	if (rs.end >= old_end) {
+	    *er = spcl_make_err(E_BAD_SYNTAX, vp, "expected matching '%c'", get_match(c));
+	    return old_end;
+	}
 	rs.start += 1;
 	//now set tokens appropriately
 	if (c == BEG_PAR) {
@@ -2161,7 +2180,7 @@ spcl_local psize _tokenize(vproc *vp, read_state rs, optree_nd *nd, sm_state sta
 	    //otherwise there was an unexpected token and we should end
 	    psize old_s = rs.start;
 	    for (; rs.start < rs.end && !is_whitespace(fs_get(rs.b, rs.start)); ++rs.start) ;
-	    *er = spcl_make_err(E_BAD_SYNTAX, vp, "expected line end instead of %.*s", rs.start-old_s, rs.b->cache+old_s);
+	    *er = spcl_make_err(E_BAD_SYNTAX, vp, "expected line end instead of \'%.*s\'", rs.start-old_s, rs.b->cache+old_s);
 	    return rs.end;
 	}
     break;
@@ -2197,8 +2216,12 @@ spcl_local psize _tokenize(vproc *vp, read_state rs, optree_nd *nd, sm_state sta
 		    optree_nd *tmp = optree_insert_op(nd, OPTR_CALL, &vp->a);
 		    nd->r = make_nd(nd, 0, &vp->a);
 		    nd = nd->r;
-		    //now read the contents of the call
+		    //now read the contents of the call. TODO: find a way to avoid code duplication
 		    sub_rs.end = strchr_block_rs(sub_rs.b, sub_rs.start, sub_rs.end, get_match(c));
+		    if (sub_rs.end >= rs.end) {
+			*er = spcl_make_err(E_BAD_SYNTAX, vp, "expected matching '%c'", END_PAR);
+			return rs.end;
+		    }
 		    sub_rs.start += 1;
 		    rs = sub_rs;
 		    change_state(SM_EX_LSTART);
@@ -2209,6 +2232,10 @@ spcl_local psize _tokenize(vproc *vp, read_state rs, optree_nd *nd, sm_state sta
 		    nd = nd->r;
 		    //now read the contents of the access
 		    sub_rs.end = strchr_block_rs(sub_rs.b, sub_rs.start, sub_rs.end, get_match(c));
+		    if (sub_rs.end >= rs.end) {
+			*er = spcl_make_err(E_BAD_SYNTAX, vp, "expected matching '%c'", END_SQR);
+			return rs.end;
+		    }
 		    sub_rs.start += 1;
 		    rs = sub_rs;
 		    change_state(SM_EX_LSTART);
@@ -2246,7 +2273,7 @@ spcl_local psize _tokenize(vproc *vp, read_state rs, optree_nd *nd, sm_state sta
 	    aappend(&vp->a, c);
 	    ++nd->v.n_els;
 	}
-	*er = spcl_make_err(E_BAD_SYNTAX, vp, "expected terminating %c", match);
+	*er = spcl_make_err(E_BAD_SYNTAX, vp, "expected matching \'%c\'", match);
 	return rs.end;
     break;
     default: break;
@@ -2324,8 +2351,8 @@ static inline unfold_res _list_def_unfold(vproc *vp, optree_nd *nd, usize *insts
 	//TODO: ommit pointer referencing and implement lists as simple headers
 	ret.type = VAL_LIST;
 	ret.l = L_HEP;
-	ret.v.hp = xmalloc(sizeof(spcl_val)*(n_els+1), vp);
-	ret.v.hp->val.l = ret.v.hp + 1;
+	ret.v.hp = xmalloc(sizeof(spcl_val), vp);
+	ret.v.hp->val.l = xmalloc(sizeof(spcl_val)*n_els, vp);
 	ret.v.hp->type = VAL_LIST;
 	ret.v.hp->n_els = n_els;
 	tmp = nd->l;
@@ -2368,10 +2395,84 @@ static inline unfold_res _list_def_unfold(vproc *vp, optree_nd *nd, usize *insts
     return ret;
 }
 /**
+ * Unfold a function call
+ */
+static inline unfold_res _call_unfold(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, spcl_val *er) {
+    unfold_res ret = (unfold_res){0};
+    if (nd->l == NULL || ndflag(nd->l, ND_ISLF) == 0) {
+	*er = spcl_make_err(E_BAD_SYNTAX, vp, "expected function name before call");
+	return ret;
+    }
+    unfold_res fres = unfold_optree(vp, nd->l, insts, n_insts, er);
+    spcl_val fval = (fres.l == L_STK)? vp->stack[fres.v.st] : (fres.l == L_LIT)? spcl_make_int(fres.v.st) : *fres.v.hp;
+    if (fval.type != VAL_FN) {
+	*er = spcl_make_err(E_BAD_TYPE, vp, "cannot call non-function %s", valnames[fval.type]);
+	return ret;
+    }
+    //now push each argument onto the stack
+    psize n_els = 0;
+    int allcnst = 1;
+    psize n_before;
+    optree_nd *tmp = nd->r;
+    while (tmp) {
+	//if its a comma, unfold the appended value. Otherwise unfold the value itself
+	optree_nd *to_unfold = ((tmp->flags & ND_ISOP) && tmp->v.val.i == OPTR_APPND)? tmp->l : tmp;
+	unfold_res tr = unfold_optree(vp, to_unfold, insts, n_insts, er);
+	ret.n_written += tr.n_written;
+	n_before = ret.n_written;
+	//we have to manipulate the stack such that the value returned from tr is at the top of the stack and no other values were pushed
+	if (tr.l == L_STK) {
+	    debug_assert(tr.v.st >= 0);
+	    if (tr.v.st+1 < tr.n_pushed) {
+		//if other values were pushed, we need to make sure this value is the highest so we can pop everything below
+		insts[ret.n_written++] = gen_op3(OP_MOV, L_STK, L_STK);
+		insts[ret.n_written++] = tr.n_pushed-1;
+		insts[ret.n_written++] = tr.l;
+		if (tr.n_pushed > 1)
+		    insts[ret.n_written++] = set_meta(gen_op1(OP_POPN), tr.n_pushed-1);
+	    } else if (tr.v.st > tr.n_pushed) {
+		//if the value is higher on the stack, then we need to push a duplicate 
+		if (tr.n_pushed > 0)
+		    insts[ret.n_written++] = set_meta(gen_op1(OP_POPN), tr.n_pushed);
+		insts[ret.n_written++] = gen_op2(OP_PUSH, L_STK);
+		insts[ret.n_written++] = tr.v.st;
+	    }
+	} else {
+	    if (tr.n_pushed > 0)
+		insts[ret.n_written++] = set_meta(gen_op1(OP_POPN), tr.n_pushed);
+	    insts[ret.n_written++] = gen_op2(OP_PUSH, tr.l);
+	    insts[ret.n_written++] = (tr.l == L_LIT)? tr.v.st : (usize)tr.v.hp;
+	}
+	//execute all instructions
+	vproc_exec(vp, insts+n_before, ret.n_written-n_before);
+	//check whether all the arguments were constants (in which case we can propogate)
+	if (tmp->flags & ND_ISLF || ((tmp->flags & ND_ISOP) && (tmp->v.val.i != OPTR_APPND || !(tmp->l->flags & ND_ISCNST))))
+	    allcnst = 0;
+	++n_els;
+	//if the unfolded operation matches the current operation, we've reached the end
+	if (to_unfold == tmp)
+	    break;
+	tmp = tmp->r;
+    }
+    //lastly, we need to push the number of arguments and the call instruction
+    n_before = ret.n_written;
+    insts[ret.n_written++] = gen_op2(OP_PUSH, L_LIT);
+    insts[ret.n_written++] = n_els;
+    insts[ret.n_written++] = gen_op2(OP_CALL, fres.l);
+    insts[ret.n_written++] = (fres.l == L_STK)? fres.v.st+n_els+1 : (fres.l == L_LIT)? fres.v.st : (usize)fres.v.hp;
+    //execute the call, TODO: allow for tuple return
+    vproc_exec(vp, insts+n_before, ret.n_written-n_before);
+    ret.l = L_STK;
+    ret.v.st = 0;
+    ret.n_pushed = 0;
+    //calls always push their return values to the stack
+    //TODO: constant propagation, this is a little tricky since we first must ensure the function called has no side effects
+}
+/**
  * Helper for unfold_optree which turns a node into a constant and returns the result
  * nd: the node with the operation to be performed
  */
-static inline unfold_res unfold_const(optree_nd *nd) {
+static inline unfold_res unfold_const(optree_nd *nd, vproc *vp) {
     //TODO: return literals for floating point values
     unfold_res ret = (unfold_res){0};
     ret.type = nd->v.type;
@@ -2380,16 +2481,26 @@ static inline unfold_res unfold_const(optree_nd *nd) {
 	ret.v.st = nd->v.val.i;
     } else {
 	ret.l = L_HEP;
-	ret.v.hp = &(nd->v);
+	spcl_val v = copy_spcl_val(nd->v, vp);
+	//the memory stored in v will persist after the call, but not v itself. We must allocate
+	ret.v.hp = xmalloc(sizeof(spcl_val), vp);
+	*ret.v.hp = v;
     }
     return ret;
 }
 static inline unfold_res const_prop(unfold_res def, vproc *vp, optree_nd *nd) {
+    //ternary operators are a special case since they use three values
+    if (nd->v.val.i == OPTR_TRNQ && ndflag(nd->l, ND_ISCNST) && ndflag(nd->r->l, ND_ISCNST) && ndflag(nd->r->r, ND_ISCNST)) {
+	nd->flags = ND_ISCNST;
+	nd->v = vp->stack[vp->sp+def.v.st];
+	vp->sp += def.n_pushed;
+	return unfold_const(nd, vp);
+    }
     if (ndflag(nd->l, ND_ISCNST) && ndflag(nd->r, ND_ISCNST) && nd->v.val.i <= OP_AND) {
 	nd->flags = ND_ISCNST;
 	nd->v = vp->stack[vp->sp+def.v.st];
 	vp->sp += def.n_pushed;
-	return unfold_const(nd);
+	return unfold_const(nd, vp);
     }
     def.type = vp->stack[vp->sp+def.v.st].type;
     def.l = L_STK;
@@ -2409,7 +2520,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
     }
     unfold_res ret = (unfold_res){0};
     if (nd->flags & ND_ISCNST) {
-	return unfold_const(nd);
+	return unfold_const(nd, vp);
     } else if (nd->flags & ND_ISLF) {
 	ret.l = L_STK;
 	//TODO: this will break once we remove labels so it needs modification
@@ -2429,12 +2540,15 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    *er = spcl_make_err(E_UNDEF, vp, "token \"%.*s\" not defined", str.n, str.s);
 	}
     } else if (nd->flags & ND_ISOP) {
+	optree_nd *trn_parent = NULL;
 	//parentheses and list definitions are special cases
 	if (nd->v.val.i == OPTR_PAREN) {
 	    ret = unfold_optree(vp, nd->l, insts, n_insts, er);
 	    if (ndflag(nd->l, ND_ISCNST))
 		*nd = *nd->l;
 	    return ret;
+	} else if (nd->v.val.i == OPTR_CALL) {
+	    return _call_unfold(vp, nd, insts, n_insts, er);
 	} else if (nd->v.val.i == OPTR_LSTDF) {
 	    return _list_def_unfold(vp, nd, insts, n_insts, er);
 	} else if (nd->v.val.i == OPTR_NOT) {
@@ -2451,6 +2565,14 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    }
 	    vproc_exec(vp, insts, ret.n_written);
 	    return const_prop(ret, vp, nd);
+	} else if (nd->v.val.i == OPTR_TRNQ) {
+	    //switch to the colon since we'll need to unfold both of those operators
+	    trn_parent = nd;
+	    nd = nd->r;
+	    if (!ndflag(nd, ND_ISOP) || nd->v.val.i != OPTR_TRNC) {
+		*er = spcl_make_err(E_BAD_SYNTAX, vp, "expected \':\' in ternary");
+		return ret;
+	    }
 	} else if (nd->v.val.i == OPTR_ASSGN) {
 	    //if its an assignment, then we need to perform that action before there is any complaint about missing values
 	    ret = unfold_optree(vp, nd->r, insts, n_insts, er);
@@ -2461,7 +2583,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 		ret.v.st = 0;
 	    }
 	    vproc_exec(vp, insts, ret.n_written);
-	    spcl_set_valn(vp, nd->l->v.val.s, nd->l->v.n_els, spcl_make_int(vp->sp), 0);
+	    spcl_set_valn(vp->c, nd->l->v.val.s, nd->l->v.n_els, spcl_make_int(vp->sp), 0, vp);
 	    return ret;
 	}
 	//otherwise, unfold both children and check for errors
@@ -2477,6 +2599,25 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	ret.n_pushed += lr.n_pushed + rr.n_pushed;
 	//we need to keep track of the number of instructions before writing so that we can execute
 	psize n_before = ret.n_written;
+	//handle ternary operator conditions
+	if (trn_parent) {
+	    unfold_res cr = unfold_optree(vp, trn_parent->l, insts, n_insts-ret.n_written, er);
+	    if (er->type == VAL_ERR)
+		return cr;
+	    //correct the return write and push numbers
+	    ret.n_written += cr.n_written;
+	    ret.n_pushed += cr.n_pushed;
+	    n_before += cr.n_written;
+	    //write the ternary expression
+	    insts[ret.n_written++] = set_meta(gen_op3(OP_TRN, lr.l, rr.l), cr.l);
+	    insts[ret.n_written++] = (lr.l == L_STK)?lr.v.st+rr.n_pushed+cr.n_pushed:(lr.l == L_LIT)?lr.v.st:(usize)lr.v.hp;
+	    insts[ret.n_written++] = (rr.l == L_STK)?rr.v.st+cr.n_pushed:(rr.l == L_LIT)?rr.v.st:(usize)rr.v.hp;
+	    insts[ret.n_written++] = (cr.l == L_STK)?cr.v.st:(cr.l == L_LIT)?cr.v.st:(usize)cr.v.hp;
+	    ret.v.st = 0;
+	    ++ret.n_pushed;
+	    vproc_exec(vp, insts+n_before, ret.n_written-n_before);
+	    return const_prop(ret, vp, nd);
+	}
 	//if the result of l was pushed onto the stack then we can modify it inplace and return the result, otherwise use a generic operator that pushes onto the stack
 	if (lr.l == L_STK && lr.v.st < ret.n_pushed && nd->v.val.i <= OP_SHR) {
 	    insts[ret.n_written++] = gen_op3((nd->v.val.i | RELOP_BIT), lr.l, rr.l);
@@ -2496,7 +2637,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    nd->flags = ND_ISCNST;
 	    nd->v = vp->stack[vp->sp+ret.v.st];
 	    vp->sp += ret.n_pushed;
-	    return unfold_const(nd);
+	    return unfold_const(nd, vp);
 	}
 	ret.type = vp->stack[vp->sp+ret.v.st].type;
 	ret.l = L_STK;*/
@@ -2725,6 +2866,7 @@ vproc *make_vproc() {
     init_arena(&vp->a, VP_ARENA_N, vp);
     //TODO: move this to function definitions
     vp->c = make_spcl_inst(NULL, vp);
+    setup_builtins(vp);
     return vp;
 }
 void destroy_vproc(vproc *vp) {
@@ -2747,14 +2889,17 @@ static inline void _pshcpy(vproc *vp, spcl_val v) {
 spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
     usize pc = 0;
     s8 *name;
-    spcl_val tmpd, tmps;
+    spcl_val tmpd, tmps, tmpa;
+    spcl_val *dst, *src, *arg;
     short code, blen, meta;
     while (pc < n_insts) {
 	code = op_code(insts[pc]);
 	blen = op_blen(insts[pc]);
+	//check that there are enough instructions
+	//debug_assert(pc+OP_LENS[code] < n_insts+1);
 	//TODO: come up with a less hacky way of doing this than passing pointers to tmpd and tmps
-	spcl_val *dst = _val_from_inst(vp, op_dstl(insts[pc]), insts[pc+1], &tmpd);
-	spcl_val *src = _val_from_inst(vp, op_srcl(insts[pc]), insts[pc+2], &tmps);
+	dst = _val_from_inst(vp, op_dstl(insts[pc]), insts[pc+1], &tmpd);
+	src = _val_from_inst(vp, op_srcl(insts[pc]), insts[pc+2], &tmps);
 	switch (code) {
 	case 0: ++pc;break; //noop
 	/*case OP_SRCH:
@@ -2770,8 +2915,30 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
 	    spcl_set_valn(vp->c, dst->val.s, dst->n_els, *src, 1);
 	    pc += 3;
 	break;*/
+	case OP_CALL:
+	    if (dst->type != VAL_FN)
+		return spcl_make_err(E_BAD_TYPE, vp, "cannot call non-function %s", valnames[dst->type]);
+	    tmpd = vp->stack[vp->sp++];
+	    if (tmpd.type != VAL_INT)
+		return spcl_make_err(E_BAD_VALUE, vp, "corrupted stack");
+	    //TODO: refactor spcl_fn_call out of existance
+	    spcl_fn_call fc;
+	    fc.n_args = tmpd.val.i;
+	    for (psize i = fc.n_args-1; i > 0; --i)
+		fc.args[i] = vp->stack[vp->sp++];
+	    vp->stack[--vp->sp] = spcl_uf_eval(dst->val.f, fc, vp);
+	    pc += 2;
+	break;
+	case OP_TRN:
+	    arg = _val_from_inst(vp, op_meta(insts[pc]), insts[pc+3], &tmpa);
+	    tmpa = *arg;
+	    if (spcl_isfalse(tmpa))
+		vp->stack[--vp->sp] = *src;
+	    else
+		vp->stack[--vp->sp] = *dst;
+	    pc += 4;
+	break;
 	case OP_ALLOC:
-	    assert(pc+1 < n_insts);
 	    if (dst->type != VAL_INT)
 		return spcl_make_err(E_BAD_TYPE, vp, "list size must be an integer");
 	    //TODO: garbage collection
@@ -2785,7 +2952,6 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
 	    pc += 2;
 	break;
 	case OP_REA:
-	    assert(pc+2 < n_insts);
 	    if (src->type != VAL_INT)
 		return spcl_make_err(E_BAD_TYPE, vp, "list index must be an integer");
 	    if (dst->type == VAL_LIST)
@@ -2795,7 +2961,6 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
 	    pc += 3;
 	break;
 	case OP_WEA:
-	    assert(pc+2 < n_insts);
 	    if (src->type != VAL_INT)
 		return spcl_make_err(E_BAD_TYPE, vp, "list index must be an integer");
 	    if (dst->type == VAL_LIST) {
@@ -2972,35 +3137,36 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
     return (spcl_val){0};
 }
 
-void spcl_set_valn(vproc *vp, char* p_name, size_t namelen, spcl_val p_val, int copy) {
+void spcl_set_valn(spcl_inst *c, char* p_name, size_t namelen, spcl_val p_val, int copy, vproc *vp) {
     //generate a fake name if none was provided
     if (!p_name || p_name[0] == 0) {
 	char tmp[SPCL_STR_BSIZE];
-	snprintf(tmp, SPCL_STR_BSIZE, "\e_%lu", vp->c->n_memb);
-	return spcl_set_valn(vp, tmp, namelen, p_val, copy);
+	snprintf(tmp, SPCL_STR_BSIZE, "\e_%lu", c->n_memb);
+	return spcl_set_valn(c, tmp, namelen, p_val, copy, vp);
     }
     s8 tmp_name = (s8){p_name, namelen};
-    size_t ti = fnv_1(tmp_name, vp->c->t_bits);
-    if (!find_ind(vp->c, tmp_name, &ti)) {
+    size_t ti = fnv_1(tmp_name, c->t_bits);
+    if (!find_ind(c, tmp_name, &ti)) {
 	//if there isn't already an element with that name we have to expand the table and add a member
-	if (grow_inst(vp->c, vp))
-	    find_ind(vp->c, tmp_name, &ti);
-	vp->c->table[ti].s.s = strndup(p_name, namelen);
-	vp->c->table[ti].s.n = namelen;
-	vp->c->table[ti].v = (copy)? copy_spcl_val(p_val, vp) : p_val;
-	++vp->c->n_memb;
+	if (grow_inst(c, vp))
+	    find_ind(c, tmp_name, &ti);
+	c->table[ti].s.s = strndup(p_name, namelen);
+	c->table[ti].s.n = namelen;
+	c->table[ti].v = (copy)? copy_spcl_val(p_val, vp) : p_val;
+	++c->n_memb;
     } else {
 	//otherwise we need to cleanup the old spcl_val and add the new
-	cleanup_spcl_val( &(vp->c->table[ti].v), NULL );
-	vp->c->table[ti].v = (copy)? copy_spcl_val(p_val, vp) : p_val;
+	cleanup_spcl_val( &(c->table[ti].v), NULL );
+	c->table[ti].v = (copy)? copy_spcl_val(p_val, vp) : p_val;
     }
 }
-/*spcl_val spcl_find(vproc *vp, const char* str) {
-    spcl_fstream* fs = make_spcl_fstream_str(str, strlen(str));
-    spcl_val v = spcl_find_rs( vp, make_read_state(fs, 0, fs_end(fs)) );
-    destroy_spcl_fstream(fs);
-    return v;
-}*/
+spcl_val spcl_find(spcl_inst *c, s8 name) {
+    size_t ti = fnv_1(name, c->t_bits);
+    if (!find_ind(c, name, &ti)) {
+	return (spcl_val){0};
+    }
+    return c->table[ti].v;
+}
 int spcl_find_object(vproc *vp, const char* str, const char* typename, spcl_inst** sto) {
     spcl_val vobj = spcl_parse_line(vp, str);
     if (vobj.type != VAL_INST)

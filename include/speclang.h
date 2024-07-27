@@ -52,7 +52,8 @@ typedef enum {BLK_UNDEF, BLK_MISC, BLK_INVERT, BLK_TRANSFORM, BLK_DATA, BLK_ROOT
 /**
  * Macro to set a value while automagically calculating the string length
  */
-#define spcl_set_val(VP, NAME, VAL, COPY) spcl_set_valn(VP, NAME, strlen(NAME), VAL, COPY)
+#define spcl_set_val(name,val,copy,vp) spcl_set_valn(vp->c, name, strlen(name), val, copy, vp)
+#define spcl_set_sub_val(c,name,val,copy,vp) spcl_set_valn(c, name, strlen(name), val, copy, vp)
 #define make_spcl_fstream(NAME) make_spcl_fstreamn(NAME, strlen(NAME))
 /**
  * provides a handy macro which wraps get_sigerr and aborts execution of a function if an invalid signature was detected
@@ -77,7 +78,8 @@ typedef enum {BLK_UNDEF, BLK_MISC, BLK_INVERT, BLK_TRANSFORM, BLK_DATA, BLK_ROOT
  * FN_CALL: the C function to add
  * NAME: the name of the function when calling from a spcl script
  */
-#define spcl_add_fn(VP, FN_CALL, NAME) spcl_set_valn(VP, NAME, strlen(NAME), spcl_make_fn(NAME, 1, &FN_CALL, VP), 0);
+#define spcl_add_fn(fn_call,name,vp) spcl_set_valn(vp->c,name,strlen(name),spcl_make_fn(name,1,&fn_call,vp),0,vp);
+#define spcl_add_sub_fn(c,fn_call,name,vp) spcl_set_valn(c,name,strlen(name),spcl_make_fn(name,1,&fn_call,vp),0,vp);
 
 /** ======================================================== utility functions ======================================================== **/
 
@@ -245,7 +247,7 @@ spcl_val spcl_make_list(const spcl_val* vs, size_t n_vs, vproc *vp);
 /**
  * Add a new callable function with the signature sig and function pointer corresponding to the executed code. This function must accept a function and a pointer to an error code and return a spcl_val.
  */
-spcl_val spcl_make_fn(const char* name, size_t n_args, lib_call p_exec, vproc *vp);
+spcl_val spcl_make_fn(const char* name, psize n_ret, lib_call p_exec, vproc *vp);
 /**
  * make an instance object with the given type
  * p: the parent of the current instance (i.e. its owner
@@ -402,7 +404,7 @@ void destroy_spcl_inst(spcl_inst* c, vproc *vp);
  * name: the name of the variable to set
  * returns: the matching spcl_val, no deep copies are performed
  */
-//spcl_val spcl_find(const struct spcl_inst* c, const char* name);
+spcl_val spcl_find(spcl_inst* c, s8 name);
 /**
  * Lookup the object named str in c and save the resulting spcl_inst to sto
  * c: the spcl_inst to search
@@ -471,6 +473,6 @@ int spcl_find_float(vproc *vp, const char* str, double* sto);
  * copy: This is a boolean which, if true, performs a deep copy of new_val. Otherwise, only a shallow copy (move) is performed.
  * move_assign: If set to true, then the spcl_val is directly moved into the spcl_inst. This can save some time.
  */
-void spcl_set_valn(vproc *vp, char* name, size_t namelen, spcl_val new_val, int copy);
+void spcl_set_valn(spcl_inst *c, char* name, size_t namelen, spcl_val new_val, int copy, vproc *vp);
 
 #endif //READ_H

@@ -221,9 +221,6 @@ TEST_CASE("optree unfolding") {
     u64 inst_buf[INST_SIZE];
     spcl_val er;
     memset(&er, 0, sizeof(spcl_val));
-    /*spcl_set_val(vp, "a", spcl_make_int(11), 1);
-    spcl_set_val(vp, "b", spcl_make_int(22), 1);
-    spcl_set_val(vp, "c", spcl_make_int(33), 1);*/
 
     s8cpp s8_seta("a = 11");
     s8cpp s8_setb("b = 22");
@@ -418,43 +415,7 @@ TEST_CASE("spcl_val parsing") {
 	    CHECK(spcl_strcmp(element.val.l[2], cstr_to_spcl("6")) == 0);
 	}
 	cleanup_spcl_val(&tmp_val, vp);
-    }
-    SUBCASE("Reading vectors to spcl_vals works") {
-	//test one element lists
-	safecpy(buf, "vec(1.2, 3.4,56.7)", SPCL_STR_BSIZE);
-	tmp_val = spcl_parse_line(vp, buf);
-	REQUIRE(tmp_val.type == VAL_ARRAY);
-	REQUIRE(tmp_val.val.a != NULL);
-	REQUIRE(tmp_val.n_els == 3);
-	CHECK(tmp_val.val.a[0] == doctest::Approx(1.2));
-	CHECK(tmp_val.val.a[1] == doctest::Approx(3.4));
-	CHECK(tmp_val.val.a[2] == doctest::Approx(56.7));
-	cleanup_spcl_val(&tmp_val, vp);
-
-	safecpy(buf, "array([1.2, 3.4,56.7])", SPCL_STR_BSIZE);
-	tmp_val = spcl_parse_line(vp, buf);
-	REQUIRE(tmp_val.type == VAL_ARRAY);
-	REQUIRE(tmp_val.val.a != NULL);
-	REQUIRE(tmp_val.n_els == 3);
-	CHECK(tmp_val.val.a[0] == doctest::Approx(1.2));
-	CHECK(tmp_val.val.a[1] == doctest::Approx(3.4));
-	CHECK(tmp_val.val.a[2] == doctest::Approx(56.7));
-	cleanup_spcl_val(&tmp_val, vp);
-
-	safecpy(buf, "array([[0, 1, 2], [3, 4, 5], [6, 7, 8]])", SPCL_STR_BSIZE);
-	tmp_val = spcl_parse_line(vp, buf);
-	REQUIRE(tmp_val.type == VAL_MAT);
-	REQUIRE(tmp_val.val.l != NULL);
-	REQUIRE(tmp_val.n_els == 3);
-	for (size_t i = 0; i < 3; ++i) {
-	    REQUIRE(tmp_val.val.l[i].type == VAL_ARRAY);
-	    REQUIRE(tmp_val.val.l[i].n_els == 3);
-	    for (size_t j = 0; j < 3; ++j) {
-		CHECK(tmp_val.val.l[i].val.a[j] == i*3 + j);
-	    }
-	}
-	cleanup_spcl_val(&tmp_val, vp);
-    }
+    } 
     destroy_vproc(vp);
 }
 
@@ -578,7 +539,8 @@ TEST_CASE("operations") {
 	CHECK(spcl_test(vp, "!false") == 1);
 	CHECK(spcl_test(vp, "!true") == 0);
 	//short circuiting && statements work (if the second branch is evaluated an error will occur)
-	safecpy(buf, "(\"foo\"-\"bar\" == 0)", SPCL_STR_BSIZE);
+	//TODO: come up with an error condition that will occur at runtime and not const-propagate
+	/*safecpy(buf, "(\"foo\"-\"bar\" == 0)", SPCL_STR_BSIZE);
 	spcl_val v = spcl_parse_line(vp, buf);
 	CHECK(v.type == VAL_ERR);
 	safecpy(buf, "(false && \"foo\"-\"bar\" == 0)", SPCL_STR_BSIZE);
@@ -587,7 +549,7 @@ TEST_CASE("operations") {
 	//short circuiting || statements works (if the second branch is evaluated an error will occur)
 	safecpy(buf, "(true || \"foo\"-\"bar\" == 0)", SPCL_STR_BSIZE);
 	v = spcl_parse_line(vp, buf);
-	test_num(v, 1);
+	test_num(v, 1);*/
     }
     SUBCASE("Ternary operators work") {
 	safecpy(buf, "(false) ? 100 : 200", SPCL_STR_BSIZE);
@@ -639,105 +601,45 @@ TEST_CASE("operations") {
 	REQUIRE(tmp_val.type == VAL_ERR);
 	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
 	INFO("message=", tmp_val.val.e->msg);
-	WARN(strcmp(tmp_val.val.e->msg, "expected ]") == 0);
+	WARN(strcmp(tmp_val.val.e->msg, "expected matching \']\'") == 0);
 	cleanup_spcl_val(&tmp_val, vp);
 	safecpy(buf, "a(1,2", SPCL_STR_BSIZE);
 	tmp_val = spcl_parse_line(vp, buf);
 	REQUIRE(tmp_val.type == VAL_ERR);
 	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
 	INFO("message=", tmp_val.val.e->msg);
-	WARN(strcmp(tmp_val.val.e->msg, "expected )") == 0);
+	WARN(strcmp(tmp_val.val.e->msg, "expected matching \')\'") == 0);
 	cleanup_spcl_val(&tmp_val, vp);
 	safecpy(buf, "\"1,2", SPCL_STR_BSIZE);
 	tmp_val = spcl_parse_line(vp, buf);
 	REQUIRE(tmp_val.type == VAL_ERR);
 	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
 	INFO("message=", tmp_val.val.e->msg);
-	WARN(strcmp(tmp_val.val.e->msg, "expected \"") == 0);
+	WARN(strcmp(tmp_val.val.e->msg, "expected matching \'\"\'") == 0);
 	cleanup_spcl_val(&tmp_val, vp);
 	safecpy(buf, "1,2]", SPCL_STR_BSIZE);
 	tmp_val = spcl_parse_line(vp, buf);
 	REQUIRE(tmp_val.type == VAL_ERR);
 	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
 	INFO("message=", tmp_val.val.e->msg);
-	WARN(strcmp(tmp_val.val.e->msg, "unexpected ]") == 0);
+	WARN(strcmp(tmp_val.val.e->msg, "expected line end instead of \']\'") == 0);
 	cleanup_spcl_val(&tmp_val, vp);
 	safecpy(buf, "1,2)", SPCL_STR_BSIZE);
 	tmp_val = spcl_parse_line(vp, buf);
 	REQUIRE(tmp_val.type == VAL_ERR);
 	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
 	INFO("message=", tmp_val.val.e->msg);
-	WARN(strcmp(tmp_val.val.e->msg, "unexpected )") == 0);
+	WARN(strcmp(tmp_val.val.e->msg, "expected line end instead of \')\'") == 0);
 	cleanup_spcl_val(&tmp_val, vp);
 	safecpy(buf, "1,2\"", SPCL_STR_BSIZE);
 	tmp_val = spcl_parse_line(vp, buf);
 	REQUIRE(tmp_val.type == VAL_ERR);
 	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
 	INFO("message=", tmp_val.val.e->msg);
-	WARN(strcmp(tmp_val.val.e->msg, "expected \"") == 0);
+	WARN(strcmp(tmp_val.val.e->msg, "expected line end instead of \'\"\'") == 0);
 	cleanup_spcl_val(&tmp_val, vp);
     }
-    //destroy_vproc(vp);
-}
-
-TEST_CASE("list interpretations") {
-    char buf[SPCL_STR_BSIZE];
-    vproc *vp = make_vproc();
-    //test lists interpretations
-    safecpy(buf, "[[i*2 for i in range(2)], [i*2-1 for i in range(1,3)], [x for x in range(1,3,0.5)]]", SPCL_STR_BSIZE);
-    spcl_val tmp_val = spcl_parse_line(vp, buf);
-    CHECK(tmp_val.type == VAL_LIST);
-    CHECK(tmp_val.val.l != NULL);
-    CHECK(tmp_val.n_els == 3);
-    {
-	//check the first sublist
-	spcl_val element = tmp_val.val.l[0];
-	REQUIRE(element.type == VAL_LIST);
-	REQUIRE(element.n_els == 2);
-	REQUIRE(element.val.l != NULL);
-	CHECK(element.val.l[0].type == VAL_NUM);
-	CHECK(element.val.l[0].val.x == 0);
-	CHECK(element.val.l[1].type == VAL_NUM);
-	CHECK(element.val.l[1].val.x == 2);
-	//check the second sublist
-	element = tmp_val.val.l[1];
-	REQUIRE(element.type == VAL_LIST);
-	REQUIRE(element.n_els == 2);
-	REQUIRE(element.val.l != NULL);
-	CHECK(element.val.l[0].type == VAL_NUM);
-	CHECK(element.val.l[0].val.x == 1);
-	CHECK(element.val.l[1].type == VAL_NUM);
-	CHECK(element.val.l[1].val.x == 3);
-	//check the third sublist
-	element = tmp_val.val.l[2];
-	REQUIRE(element.type == VAL_LIST);
-	REQUIRE(element.n_els == 4);
-	REQUIRE(element.val.l != NULL);
-	CHECK(element.val.l[0].type == VAL_NUM);
-	CHECK(element.val.l[0].val.x == 1);
-	CHECK(element.val.l[1].type == VAL_NUM);
-	CHECK(element.val.l[1].val.x == 1.5);
-	CHECK(element.val.l[2].type == VAL_NUM);
-	CHECK(element.val.l[2].val.x == 2);
-	CHECK(element.val.l[3].type == VAL_NUM);
-	CHECK(element.val.l[3].val.x == 2.5);
-    }
-    cleanup_spcl_val(&tmp_val, vp);
-    //test nested list interpretations
-    safecpy(buf, "[[x*y for x in range(1,6)] for y in range(5)]", SPCL_STR_BSIZE);
-    tmp_val = spcl_parse_line(vp, buf);
-    REQUIRE(tmp_val.type == VAL_LIST);
-    REQUIRE(tmp_val.val.l != NULL);
-    REQUIRE(tmp_val.n_els == 5);
-    for (size_t yy = 0; yy < tmp_val.n_els; ++yy) {
-	CHECK(tmp_val.val.l[yy].type == VAL_LIST);
-	CHECK(tmp_val.val.l[yy].n_els == 5);
-	for (size_t xx = 0; xx < tmp_val.val.l[yy].n_els; ++xx) {
-	    CHECK(tmp_val.val.l[yy].val.l[xx].type == VAL_NUM);
-	    CHECK(tmp_val.val.l[yy].val.l[xx].val.x == (xx+1)*yy);
-	}
-    }
-    cleanup_spcl_val(&tmp_val, vp);
+    destroy_vproc(vp);
 }
 
 TEST_CASE("builtin functions") {
@@ -1032,7 +934,103 @@ TEST_CASE("builtin functions") {
 	WARN(tmp.val.e->c == E_ASSERT);
 	cleanup_spcl_val(&tmp, vp);
     }
+    SUBCASE("Reading vectors to spcl_vals works") {
+	//test one element lists
+	safecpy(buf, "vec(1.2, 3.4,56.7)", SPCL_STR_BSIZE);
+	tmp_val = spcl_parse_line(vp, buf);
+	REQUIRE(tmp_val.type == VAL_ARRAY);
+	REQUIRE(tmp_val.val.a != NULL);
+	REQUIRE(tmp_val.n_els == 3);
+	CHECK(tmp_val.val.a[0] == doctest::Approx(1.2));
+	CHECK(tmp_val.val.a[1] == doctest::Approx(3.4));
+	CHECK(tmp_val.val.a[2] == doctest::Approx(56.7));
+	cleanup_spcl_val(&tmp_val, vp);
+
+	safecpy(buf, "array([1.2, 3.4,56.7])", SPCL_STR_BSIZE);
+	tmp_val = spcl_parse_line(vp, buf);
+	REQUIRE(tmp_val.type == VAL_ARRAY);
+	REQUIRE(tmp_val.val.a != NULL);
+	REQUIRE(tmp_val.n_els == 3);
+	CHECK(tmp_val.val.a[0] == doctest::Approx(1.2));
+	CHECK(tmp_val.val.a[1] == doctest::Approx(3.4));
+	CHECK(tmp_val.val.a[2] == doctest::Approx(56.7));
+	cleanup_spcl_val(&tmp_val, vp);
+
+	safecpy(buf, "array([[0, 1, 2], [3, 4, 5], [6, 7, 8]])", SPCL_STR_BSIZE);
+	tmp_val = spcl_parse_line(vp, buf);
+	REQUIRE(tmp_val.type == VAL_MAT);
+	REQUIRE(tmp_val.val.l != NULL);
+	REQUIRE(tmp_val.n_els == 3);
+	for (size_t i = 0; i < 3; ++i) {
+	    REQUIRE(tmp_val.val.l[i].type == VAL_ARRAY);
+	    REQUIRE(tmp_val.val.l[i].n_els == 3);
+	    for (size_t j = 0; j < 3; ++j) {
+		CHECK(tmp_val.val.l[i].val.a[j] == i*3 + j);
+	    }
+	}
+	cleanup_spcl_val(&tmp_val, vp);
+    }
     destroy_vproc(vp);
+}
+
+TEST_CASE("list interpretations") {
+    char buf[SPCL_STR_BSIZE];
+    vproc *vp = make_vproc();
+    //test lists interpretations
+    safecpy(buf, "[[i*2 for i in range(2)], [i*2-1 for i in range(1,3)], [x for x in range(1,3,0.5)]]", SPCL_STR_BSIZE);
+    spcl_val tmp_val = spcl_parse_line(vp, buf);
+    CHECK(tmp_val.type == VAL_LIST);
+    CHECK(tmp_val.val.l != NULL);
+    CHECK(tmp_val.n_els == 3);
+    {
+	//check the first sublist
+	spcl_val element = tmp_val.val.l[0];
+	REQUIRE(element.type == VAL_LIST);
+	REQUIRE(element.n_els == 2);
+	REQUIRE(element.val.l != NULL);
+	CHECK(element.val.l[0].type == VAL_NUM);
+	CHECK(element.val.l[0].val.x == 0);
+	CHECK(element.val.l[1].type == VAL_NUM);
+	CHECK(element.val.l[1].val.x == 2);
+	//check the second sublist
+	element = tmp_val.val.l[1];
+	REQUIRE(element.type == VAL_LIST);
+	REQUIRE(element.n_els == 2);
+	REQUIRE(element.val.l != NULL);
+	CHECK(element.val.l[0].type == VAL_NUM);
+	CHECK(element.val.l[0].val.x == 1);
+	CHECK(element.val.l[1].type == VAL_NUM);
+	CHECK(element.val.l[1].val.x == 3);
+	//check the third sublist
+	element = tmp_val.val.l[2];
+	REQUIRE(element.type == VAL_LIST);
+	REQUIRE(element.n_els == 4);
+	REQUIRE(element.val.l != NULL);
+	CHECK(element.val.l[0].type == VAL_NUM);
+	CHECK(element.val.l[0].val.x == 1);
+	CHECK(element.val.l[1].type == VAL_NUM);
+	CHECK(element.val.l[1].val.x == 1.5);
+	CHECK(element.val.l[2].type == VAL_NUM);
+	CHECK(element.val.l[2].val.x == 2);
+	CHECK(element.val.l[3].type == VAL_NUM);
+	CHECK(element.val.l[3].val.x == 2.5);
+    }
+    cleanup_spcl_val(&tmp_val, vp);
+    //test nested list interpretations
+    safecpy(buf, "[[x*y for x in range(1,6)] for y in range(5)]", SPCL_STR_BSIZE);
+    tmp_val = spcl_parse_line(vp, buf);
+    REQUIRE(tmp_val.type == VAL_LIST);
+    REQUIRE(tmp_val.val.l != NULL);
+    REQUIRE(tmp_val.n_els == 5);
+    for (size_t yy = 0; yy < tmp_val.n_els; ++yy) {
+	CHECK(tmp_val.val.l[yy].type == VAL_LIST);
+	CHECK(tmp_val.val.l[yy].n_els == 5);
+	for (size_t xx = 0; xx < tmp_val.val.l[yy].n_els; ++xx) {
+	    CHECK(tmp_val.val.l[yy].val.l[xx].type == VAL_NUM);
+	    CHECK(tmp_val.val.l[yy].val.l[xx].val.x == (xx+1)*yy);
+	}
+    }
+    cleanup_spcl_val(&tmp_val, vp);
 }
 
 void write_test_file(const char** lines, size_t n_lines, const char* fname) {
@@ -1152,7 +1150,7 @@ spcl_val test_fun_call(spcl_fn_call f, vproc *vp) {
     if (a > 5) {
 	ret.type = VAL_INST;
 	ret.val.c = make_spcl_inst(NULL, vp);
-	spcl_set_val(vp, "name", cstr_to_spcl("hi"), 1);
+	spcl_set_val("name", cstr_to_spcl("hi"), 1, vp);
 	return ret;
     }
     return f.args[0];
@@ -1174,7 +1172,7 @@ TEST_CASE("spcl_inst lookups") {
     char name[GEN_LEN+1];
     memset(name, 0, GEN_LEN+1);
     vproc *vp = make_vproc();
-    spcl_set_val(vp, "tao", spcl_make_str("tao", 4, vp), 0);
+    spcl_set_val("tao", spcl_make_str("tao", 4, vp), 0, vp);
     size_t n_combs = 1;
     for (size_t i = 0; i < GEN_LEN; ++i)
 	n_combs *= n_letters;
@@ -1190,7 +1188,7 @@ TEST_CASE("spcl_inst lookups") {
 	    name[k++] = letters[j % n_letters];
 	    j /= n_letters;
 	} while (j && k < GEN_LEN);
-	spcl_set_val(vp, name, spcl_make_num(i), 1);
+	spcl_set_val(name, spcl_make_num(i), 1, vp);
 	v = spcl_parse_line(vp, name);
 	test_num(v, i);
     }
@@ -1259,7 +1257,7 @@ TEST_CASE("spcl_inst parsing") {
 	write_test_file(lines, n_lines, TEST_FNAME);
 	spcl_fstream* b_1 = make_spcl_fstream(TEST_FNAME);
 	vproc *vp = make_vproc();
-	spcl_add_fn(vp, test_fun_call, "test_fun");
+	spcl_add_fn(test_fun_call, "test_fun", vp);
 	spcl_val er = spcl_read_lines(vp, b_1);
 	REQUIRE(er.type != VAL_ERR);
 	//make sure that the function is there
@@ -1337,7 +1335,7 @@ TEST_CASE("spcl_inst parsing") {
 	spcl_val er = spcl_read_lines(vp, b_1);
 	CHECK(er.type != VAL_ERR);
 	spcl_val tmp_f = spcl_make_fn("gam", 1, &test_fun_gamma, vp);
-	spcl_set_val(vp, "gam", tmp_f, 1);
+	spcl_set_val("gam", tmp_f, 1, vp);
 	cleanup_spcl_val(&tmp_f, vp);
 	er = spcl_read_lines(vp, b_2);
 	CHECK(er.type != VAL_ERR);
@@ -1352,37 +1350,37 @@ static const valtype SRC_SIG[] = {VAL_STR, VAL_NUM, VAL_NUM, VAL_NUM, VAL_NUM, V
 spcl_val spcl_gen_gaussian_source(spcl_fn_call f, vproc *vp) {
     spcl_sigcheck_opts(f, 6, SRC_SIG, vp);
     spcl_val ret = spcl_make_inst(vp->c, "Gaussian_source", vp);
-    /*spcl_set_val(ret.val.c, "component", f.args[0], 1);
-    spcl_set_val(ret.val.c, "wavelength", f.args[1], 0);
-    spcl_set_val(ret.val.c, "amplitude", f.args[2], 0);
-    spcl_set_val(ret.val.c, "width", f.args[3], 0);
-    spcl_set_val(ret.val.c, "phase", f.args[4], 0);
+    spcl_set_sub_val(ret.val.c, "component", f.args[0], 1, vp);
+    spcl_set_sub_val(ret.val.c, "wavelength", f.args[1], 0, vp);
+    spcl_set_sub_val(ret.val.c, "amplitude", f.args[2], 0, vp);
+    spcl_set_sub_val(ret.val.c, "width", f.args[3], 0, vp);
+    spcl_set_sub_val(ret.val.c, "phase", f.args[4], 0, vp);
     //read additional parameters
-    spcl_set_val(ret.val.c, "cutoff", (f.n_args>6)? f.args[5]: spcl_make_num(5), 0);
-    spcl_set_val(ret.val.c, "start_time", (f.n_args>7)? f.args[6]: spcl_make_num(5), 0);
-    spcl_set_val(ret.val.c, "region", f.args[f.n_args-1], 1);*/
+    spcl_set_sub_val(ret.val.c, "cutoff", (f.n_args>6)? f.args[5]: spcl_make_num(5), 0, vp);
+    spcl_set_sub_val(ret.val.c, "start_time", (f.n_args>7)? f.args[6]: spcl_make_num(5), 0, vp);
+    spcl_set_sub_val(ret.val.c, "region", f.args[f.n_args-1], 1, vp);
     return ret;
 }
 static const valtype BOX_SIG[] = {VAL_ARRAY, VAL_ARRAY};
 spcl_val spcl_gen_box(spcl_fn_call f, vproc *vp) {
     spcl_sigcheck(f, BOX_SIG, vp);
     spcl_val ret = spcl_make_inst(vp->c, "Box", vp);
-    /*spcl_set_val(ret.val.c, "pt_1", f.args[0], 1);
-    spcl_set_val(ret.val.c, "pt_2", f.args[1], 1);*/
+    spcl_set_sub_val(ret.val.c, "pt_1", f.args[0], 1, vp);
+    spcl_set_sub_val(ret.val.c, "pt_2", f.args[1], 1, vp);
     return ret;
 }
 static const valtype QUAD_SIG[] = {VAL_NUM};
 spcl_val spcl_quad_trap(spcl_fn_call f, vproc *vp) {
     spcl_sigcheck(f, QUAD_SIG, vp);
     spcl_val ret = spcl_make_inst(vp->c, "quad_pot", vp);
-    //spcl_set_val(ret.val.c, "k", f.args[0], 0);
+    spcl_set_sub_val(ret.val.c, "k", f.args[0], 0, vp);
     return ret;
 }
 void setup_geometry_inst(vproc *vp) {
     //we have to set up the spcl_inst with all of our functions
-    spcl_add_fn(vp, spcl_gen_gaussian_source, "Gaussian_source");
-    spcl_add_fn(vp, spcl_gen_box, "Box");
-    spcl_add_fn(vp, spcl_quad_trap, "quad_pot");
+    spcl_add_fn(spcl_gen_gaussian_source, "Gaussian_source", vp);
+    spcl_add_fn(spcl_gen_box, "Box", vp);
+    spcl_add_fn(spcl_quad_trap, "quad_pot", vp);
 }
 
 TEST_CASE("file parsing") {
