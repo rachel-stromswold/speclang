@@ -700,16 +700,16 @@ TEST_CASE("builtin functions") {
     SUBCASE("linspace()") {
         safecpy(buf, "linspace(1,2,5)", SPCL_STR_BSIZE);
         tmp_val = spcl_parse_line(vp, buf);
-        CHECK(tmp_val.type == VAL_ARRAY);
-        CHECK(tmp_val.n_els == 5);
+        REQUIRE(tmp_val.type == VAL_ARRAY);
+        REQUIRE(tmp_val.n_els == 5);
         for (size_t i = 0; i < 4; ++i) {
             CHECK(tmp_val.val.a[i] == 1.0+0.25*i);
         }
         cleanup_spcl_val(&tmp_val, vp);
         safecpy(buf, "linspace(2,1,5)", SPCL_STR_BSIZE);
         tmp_val = spcl_parse_line(vp, buf);
-        CHECK(tmp_val.type == VAL_ARRAY);
-        CHECK(tmp_val.n_els == 5);
+        REQUIRE(tmp_val.type == VAL_ARRAY);
+        REQUIRE(tmp_val.n_els == 5);
         for (size_t i = 0; i < 4; ++i) {
             CHECK(tmp_val.val.a[i] == 2.0-0.25*i);
         }
@@ -744,13 +744,13 @@ TEST_CASE("builtin functions") {
     SUBCASE("flatten()") {
 	safecpy(buf, "flatten([])", SPCL_STR_BSIZE);
 	tmp_val = spcl_parse_line(vp, buf);
-	CHECK(tmp_val.type == VAL_LIST);
-	CHECK(tmp_val.n_els == 0);
+	REQUIRE(tmp_val.type == VAL_LIST);
+	REQUIRE(tmp_val.n_els == 0);
 	cleanup_spcl_val(&tmp_val, vp);
 	safecpy(buf, "flatten([1,2,3])", SPCL_STR_BSIZE);
 	tmp_val = spcl_parse_line(vp, buf);
-	CHECK(tmp_val.type == VAL_LIST);
-	CHECK(tmp_val.n_els == 3);
+	REQUIRE(tmp_val.type == VAL_LIST);
+	REQUIRE(tmp_val.n_els == 3);
 	for (size_t i = 0; i < 3; ++i) {
 	    test_num(tmp_val.val.l[i], i+1);
 	}
@@ -1149,7 +1149,7 @@ spcl_val test_fun_call(spcl_fn_call f, vproc *vp) {
     double a = f.args[0].val.x;
     if (a > 5) {
 	ret.type = VAL_INST;
-	ret.val.c = make_spcl_inst(NULL, vp);
+	ret.val.c = make_spcl_inst(vp);
 	spcl_set_val("name", cstr_to_spcl("hi"), 1, vp);
 	return ret;
     }
@@ -1179,7 +1179,7 @@ TEST_CASE("spcl_inst lookups") {
 
     //add a whole bunch of words using the most common letters
     spcl_val v;
-    size_t before_size = vp->c->n_memb;
+    size_t before_size = vp->d.n_memb;
     auto start = std::chrono::steady_clock::now();
     for (size_t i = 0; i < n_combs; ++i) {
 	size_t j = i;
@@ -1196,7 +1196,7 @@ TEST_CASE("spcl_inst lookups") {
     double time = std::chrono::duration <double, std::milli> (end-start).count();
     printf("took %f ms to set %lu elements\n", time, n_combs);
     //lookup something not in the spcl_inst, check that we only added n_combs-1 elements because we added one match explicitly before
-    CHECK(vp->c->n_memb == n_combs+before_size-1);
+    CHECK(vp->d.n_memb == n_combs+before_size-1);
     v = spcl_parse_line(vp, "vetaon");
     CHECK(v.type == VAL_UNDEF);
     CHECK(v.val.x == 0);
@@ -1348,8 +1348,8 @@ TEST_CASE("spcl_inst parsing") {
 
 static const valtype SRC_SIG[] = {VAL_STR, VAL_NUM, VAL_NUM, VAL_NUM, VAL_NUM, VAL_NUM, VAL_NUM, VAL_INST};
 spcl_val spcl_gen_gaussian_source(spcl_fn_call f, vproc *vp) {
-    spcl_sigcheck_opts(f, 6, SRC_SIG, vp);
-    spcl_val ret = spcl_make_inst(vp->c, "Gaussian_source", vp);
+    spcl_sigcheck_opts(&f, 6, SRC_SIG, vp);
+    spcl_val ret = spcl_make_inst("Gaussian_source", vp);
     spcl_set_sub_val(ret.val.c, "component", f.args[0], 1, vp);
     spcl_set_sub_val(ret.val.c, "wavelength", f.args[1], 0, vp);
     spcl_set_sub_val(ret.val.c, "amplitude", f.args[2], 0, vp);
@@ -1363,16 +1363,16 @@ spcl_val spcl_gen_gaussian_source(spcl_fn_call f, vproc *vp) {
 }
 static const valtype BOX_SIG[] = {VAL_ARRAY, VAL_ARRAY};
 spcl_val spcl_gen_box(spcl_fn_call f, vproc *vp) {
-    spcl_sigcheck(f, BOX_SIG, vp);
-    spcl_val ret = spcl_make_inst(vp->c, "Box", vp);
+    spcl_sigcheck(&f, BOX_SIG, vp);
+    spcl_val ret = spcl_make_inst("Box", vp);
     spcl_set_sub_val(ret.val.c, "pt_1", f.args[0], 1, vp);
     spcl_set_sub_val(ret.val.c, "pt_2", f.args[1], 1, vp);
     return ret;
 }
 static const valtype QUAD_SIG[] = {VAL_NUM};
 spcl_val spcl_quad_trap(spcl_fn_call f, vproc *vp) {
-    spcl_sigcheck(f, QUAD_SIG, vp);
-    spcl_val ret = spcl_make_inst(vp->c, "quad_pot", vp);
+    spcl_sigcheck(&f, QUAD_SIG, vp);
+    spcl_val ret = spcl_make_inst("quad_pot", vp);
     spcl_set_sub_val(ret.val.c, "k", f.args[0], 0, vp);
     return ret;
 }

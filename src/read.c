@@ -31,6 +31,129 @@ static inline char fs_get(const spcl_fstream *fs, psize pos) {
     return fs->cache[pos];
 }
 
+/** ============================ custom allocators ============================ **/
+
+typedef struct _freeblk {
+    struct _freeblk *next;
+    psize len;
+} freeblk;
+
+typedef struct _heapblk {
+    struct _heapblk *next;
+    freeblk *first;
+    psize len;
+} heapblk;
+
+#define padfor(ptr, align) ((align - ((usize)ptr & (align-1))) & (align-1))
+static const psize minsz = sizeof(freeblk) + sizeof(heapblk);
+
+/**
+ * Create a new heapblk that can hold at least n bytes (plus overhead)
+ * n: the total size of the heap
+ * imsize: the size which must be allocated immediately. The resultant pointer will always be sizeof(heapblk)+sizeof(usize) bytes after the return value
+ */
+static inline void *make_heapblk(size_t n, size_t imsize) {
+    debug_assert(n > minsz+imsize);
+    heapblk *hp = malloc(n);
+    if (!hp)
+	return NULL;
+    hp->next = NULL;
+    hp->len = n;
+    hp->first = (freeblk*)((char*)hp+sizeof(heapblk)+imsize);
+    //if there is an immediate allocation, then we have to add its length to the first element
+    if (imsize)
+	hp->first = (freeblk*)((char*)hp->first + sizeof(usize));
+    //initialize the first block
+    hp->first->next = NULL;
+    hp->first->len = n - imsize;
+    return hp;
+}
+
+/**
+ * Allocate memory for the process vp
+ */
+static inline void *xmalloc(size_t n, vproc *vp) {
+    void *tmp = malloc(n);
+    if (!tmp)
+	exit(1);
+    return tmp;
+    /*heapblk *hp = (heapblk*)vp->heap;
+    freeblk **stonxt = &(hp->first);
+    freeblk *blk = hp->first;
+    while (hp->next) {
+	while (blk) {
+	    //check if the current block has enough space
+	    if (blk->len >= n+sizeof(usize)) {
+		//try dividing up the memory. First allocate find the block after the current block and its size identifier
+		char *cblk = ((char*)blk);
+		char *next = cblk + n + sizeof(usize);
+		next += padfor(next, alignof(freeblk));
+		//if there isn't enough room to hold a new freeblk, then allocate all of the available space
+		if (next + sizeof(freeblk) > cblk + blk->len) {
+		    *stonxt = blk->next;
+		    ((usize*)blk)[0] = blk->len;
+		    return cblk + sizeof(usize);
+		}
+		//rearrange the freeblk linked list
+		freeblk *tmp = (freeblk*)next;
+		tmp->next = blk->next;
+		tmp->len = cblk + blk->len - next;
+		*stonxt = tmp;
+		((usize*)blk)[0] = next - cblk;
+		return cblk + sizeof(usize);
+	    }
+	    stonxt = &(blk->next);
+	    blk = blk->next;
+	}
+	//if that failed, try going to the next heap page
+	hp = hp->next;
+	stonxt = &(hp->first);
+	blk = hp->first;
+    }
+    //find the smallest power of two larger than sizeof(heapblk+n
+    size_t to_alloc = 64;
+    for (; to_alloc < minsz+n; to_alloc *= 2)
+	assert(to_alloc < SIZE_MAX/2);
+    //if we reach this point, then there wasn't an available block. Thus, we must create a new heappage.
+    hp->next = make_heapblk(to_alloc, n);
+    if (!hp->next) {
+	fprintf(stderr, "Ran out of memory trying to allocate %lu bytes!\n", n);
+	exit(1);
+    }
+    char *ret = (char*)hp->next + sizeof(heapblk);
+    //finally we may do the immediate allocation
+    ((usize*)ret)[0] = (char*)hp->next->first - ret;
+    return hp->next + sizeof(heapblk) + sizeof(usize);*/
+}
+static inline void *xrealloc(void *p, size_t n, vproc *vp) {
+    void *tmp = realloc(p, n);
+    if (!tmp)
+	exit(1);
+    return tmp;
+    /*heapblk *hp = (heapblk*)vp->heap;
+    //TODO: something better
+    if (n >= SIZE_MAX/4) {
+	fprintf(stderr, "Ran out of memory!\n");
+	exit(1);
+    }
+    void *tmp = xmalloc(n, vp);
+    memmove(tmp, p, *((usize*)p - 1));
+    freeblk *b = (freeblk*)p;
+    b->len = *((usize*)p);
+    b->next = hp->first;
+    hp->first = b;
+
+    return tmp;*/
+}
+static inline void xfree(void* p, vproc *vp) {
+    free(p);
+    /*heapblk *hp = (heapblk*)vp->heap;
+    freeblk *b = (freeblk*)p;
+    b->len = *((usize*)p);
+    b->next = hp->first;
+    hp->first = b;*/
+}
+
 /** ======================================================== utility functions ======================================================== **/
 
 #define MAX_ASCII 0x7f
@@ -38,6 +161,16 @@ static inline char fs_get(const spcl_fstream *fs, psize pos) {
 static const int OP1_PRECS[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 3, 0, 0, 0, 0, 3, 4, 0, 4, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 5, 7, 5, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static const int OP2_PRECS[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 7, 7, 0, 7, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0};
 
+/**
+ * Allocate memory for an s8 and copy
+ */
+static inline s8 s8dup(s8 o, vproc *vp) {
+    s8 ret;
+    ret.s = xmalloc(o.n, vp);
+    memcpy(ret.s, o.s, o.n);
+    ret.n = o.n;
+    return ret;
+}
 /**
  * Print an error message
  */
@@ -123,21 +256,45 @@ int spcl_strcmp(spcl_val a, spcl_val b) {
 /**
  * get the psize of a spcl_context
  */
-static inline size_t con_size(const spcl_inst* c) {
-    if (!c)
+static inline size_t con_size(spcl_dict *d) {
+    if (!d)
 	return 0;
-    return 1 << c->t_bits;
+    return 1 << d->t_bits;
 }
 
 /**
  * iterate through a spcl_inst by finding defined entries in the table
  */
-static inline size_t con_it_next(const spcl_inst* c, size_t i) {
-    for (; i < con_size(c); ++i) {
-	if (c->table[i].v.type)
+static inline usize con_it_next(spcl_dict *d, usize i) {
+    for (; i < con_size(d); ++i) {
+	if (d->table[i].name.s)
 	    return i;
     }
     return i;
+}
+
+/**
+ * Given an uninitialized dictionary d, initialize it to a sane default
+ */
+static inline void init_spcl_dict(spcl_dict *d, vproc *vp) {
+    d->n_memb = 0;
+    d->t_bits = DEF_TAB_BITS;
+    d->table = xmalloc(sizeof(_hash_item)*con_size(d), vp);
+    memset(d->table, 0, sizeof(_hash_item)*con_size(d));
+}
+static inline void copy_spcl_dict(spcl_dict *d, spcl_dict *o, vproc *vp) {
+    d->n_memb = o->n_memb;
+    d->t_bits = o->t_bits;
+    d->table = xmalloc(sizeof(_hash_item)*con_size(d), vp);
+    for (usize i = 0; i < con_size(d); i = con_it_next(d, i+1)) {
+	d->table[i].name = s8dup(o->table[i].name, vp);
+	d->table[i].ind = o->table[i].ind;
+    }
+}
+static inline void cleanup_spcl_dict(spcl_dict *d, vproc *vp) {
+    for (usize i = con_it_next(d, 0); i < con_size(d); i = con_it_next(d, i+1))
+	xfree(d->table[i].name.s, vp);
+    xfree(d->table, vp);
 }
 
 /**
@@ -267,128 +424,6 @@ spcl_local read_state make_read_state(const spcl_fstream* fs, psize s, psize e) 
     return rs;
 }
 
-/** ============================ custom allocators ============================ **/
-
-typedef struct _freeblk {
-    struct _freeblk *next;
-    psize len;
-} freeblk;
-
-typedef struct _heapblk {
-    struct _heapblk *next;
-    freeblk *first;
-    psize len;
-} heapblk;
-
-#define padfor(ptr, align) ((align - ((usize)ptr & (align-1))) & (align-1))
-static const psize minsz = sizeof(freeblk) + sizeof(heapblk);
-
-/**
- * Create a new heapblk that can hold at least n bytes (plus overhead)
- * n: the total size of the heap
- * imsize: the size which must be allocated immediately. The resultant pointer will always be sizeof(heapblk)+sizeof(usize) bytes after the return value
- */
-static inline void *make_heapblk(size_t n, size_t imsize) {
-    debug_assert(n > minsz+imsize);
-    heapblk *hp = malloc(n);
-    if (!hp)
-	return NULL;
-    hp->next = NULL;
-    hp->len = n;
-    hp->first = (freeblk*)((char*)hp+sizeof(heapblk)+imsize);
-    //if there is an immediate allocation, then we have to add its length to the first element
-    if (imsize)
-	hp->first = (freeblk*)((char*)hp->first + sizeof(usize));
-    //initialize the first block
-    hp->first->next = NULL;
-    hp->first->len = n - imsize;
-    return hp;
-}
-
-/**
- * Allocate memory for the process vp
- */
-static inline void *xmalloc(size_t n, vproc *vp) {
-    void *tmp = malloc(n);
-    if (!tmp)
-	exit(1);
-    return tmp;
-    /*heapblk *hp = (heapblk*)vp->heap;
-    freeblk **stonxt = &(hp->first);
-    freeblk *blk = hp->first;
-    while (hp->next) {
-	while (blk) {
-	    //check if the current block has enough space
-	    if (blk->len >= n+sizeof(usize)) {
-		//try dividing up the memory. First allocate find the block after the current block and its size identifier
-		char *cblk = ((char*)blk);
-		char *next = cblk + n + sizeof(usize);
-		next += padfor(next, alignof(freeblk));
-		//if there isn't enough room to hold a new freeblk, then allocate all of the available space
-		if (next + sizeof(freeblk) > cblk + blk->len) {
-		    *stonxt = blk->next;
-		    ((usize*)blk)[0] = blk->len;
-		    return cblk + sizeof(usize);
-		}
-		//rearrange the freeblk linked list
-		freeblk *tmp = (freeblk*)next;
-		tmp->next = blk->next;
-		tmp->len = cblk + blk->len - next;
-		*stonxt = tmp;
-		((usize*)blk)[0] = next - cblk;
-		return cblk + sizeof(usize);
-	    }
-	    stonxt = &(blk->next);
-	    blk = blk->next;
-	}
-	//if that failed, try going to the next heap page
-	hp = hp->next;
-	stonxt = &(hp->first);
-	blk = hp->first;
-    }
-    //find the smallest power of two larger than sizeof(heapblk+n
-    size_t to_alloc = 64;
-    for (; to_alloc < minsz+n; to_alloc *= 2)
-	assert(to_alloc < SIZE_MAX/2);
-    //if we reach this point, then there wasn't an available block. Thus, we must create a new heappage.
-    hp->next = make_heapblk(to_alloc, n);
-    if (!hp->next) {
-	fprintf(stderr, "Ran out of memory trying to allocate %lu bytes!\n", n);
-	exit(1);
-    }
-    char *ret = (char*)hp->next + sizeof(heapblk);
-    //finally we may do the immediate allocation
-    ((usize*)ret)[0] = (char*)hp->next->first - ret;
-    return hp->next + sizeof(heapblk) + sizeof(usize);*/
-}
-static inline void *xrealloc(void *p, size_t n, vproc *vp) {
-    void *tmp = realloc(p, n);
-    if (!tmp)
-	exit(1);
-    return tmp;
-    /*heapblk *hp = (heapblk*)vp->heap;
-    //TODO: something better
-    if (n >= SIZE_MAX/4) {
-	fprintf(stderr, "Ran out of memory!\n");
-	exit(1);
-    }
-    void *tmp = xmalloc(n, vp);
-    memmove(tmp, p, *((usize*)p - 1));
-    freeblk *b = (freeblk*)p;
-    b->len = *((usize*)p);
-    b->next = hp->first;
-    hp->first = b;
-
-    return tmp;*/
-}
-static inline void xfree(void* p, vproc *vp) {
-    free(p);
-    /*heapblk *hp = (heapblk*)vp->heap;
-    freeblk *b = (freeblk*)p;
-    b->len = *((usize*)p);
-    b->next = hp->first;
-    hp->first = b;*/
-}
 /** ============================ arena allocator ============================ **/
 
 void init_arena(arena *a, psize len, vproc *vp) {
@@ -598,23 +633,28 @@ void cleanup_name_val_pair(name_val_pair nv) {
 }
 
 /** ======================================================== builtin functions ======================================================== **/
-spcl_val get_sigerr(spcl_fn_call f, size_t min_args, size_t max_args, const valtype* sig, vproc *vp) {
+spcl_val get_sigerr(spcl_fn_call *f, size_t min_args, size_t max_args, const valtype* sig, vproc *vp) {
     if (!sig || max_args < min_args)
 	return spcl_make_none();
-    if (f.n_args < min_args)
-	return spcl_make_err(E_LACK_TOKENS, vp, "%.*s expected %lu arguments, got %lu", f.name.n, f.name.s, min_args, f.n_args);
-    if (f.n_args > max_args)
-	return spcl_make_err(E_LACK_TOKENS, vp, "%.*s with too many arguments, %lu", f.name.n, f.name.s, f.n_args);
-    for (size_t i = 0; i < f.n_args; ++i) {
+    if (f->n_args < min_args)
+	return spcl_make_err(E_LACK_TOKENS, vp, "%.*s expected %lu arguments, got %lu", f->name.n, f->name.s, min_args, f->n_args);
+    if (f->n_args > max_args)
+	return spcl_make_err(E_LACK_TOKENS, vp, "%.*s with too many arguments, %lu", f->name.n, f->name.s, f->n_args);
+    for (size_t i = 0; i < f->n_args; ++i) {
 	//treat undefined as allowing for arbitrary type
-	if (sig[i] && f.args[i].type != sig[i]) {
+	if (sig[i] && f->args[i].type != sig[i]) {
+	    //automatically convert ints to floats
+	    if (sig[i] == VAL_NUM && f->args[i].type == VAL_INT) {
+		f->args[i].type = VAL_NUM;
+		f->args[i].val.x = (double)(f->args[i].val.i);
+	    }
 	    //if the type is an error, let it pass through
-	    if (f.args[i].type == VAL_ERR)
-		return f.args[i];
-	    return spcl_make_err(E_BAD_TYPE, vp, "%.*s expected args[%lu].type=%s, got %s", f.name.n, f.name.s, i, valnames[sig[i]], valnames[f.args[i].type]);
+	    if (f->args[i].type == VAL_ERR)
+		return f->args[i];
+	    return spcl_make_err(E_BAD_TYPE, vp, "%.*s expected args[%lu].type=%s, got %s", f->name.n, f->name.s, i, valnames[sig[i]], valnames[f->args[i].type]);
 	}
-	if (sig[i] > VAL_NUM && f.args[i].val.s == NULL)
-	    return spcl_make_err(E_BAD_TYPE, vp, "%.*s found empty %s at args[%lu]", f.name.n, f.name.s, valnames[sig[i]], i);
+	if (sig[i] > VAL_NUM && f->args[i].val.s == NULL)
+	    return spcl_make_err(E_BAD_TYPE, vp, "%.*s found empty %s at args[%lu]", f->name.n, f->name.s, valnames[sig[i]], i);
     }
     return spcl_make_none();
 }
@@ -623,21 +663,22 @@ static const valtype NUM1_SIG[] = {VAL_NUM};
 static const valtype ARR1_SIG[] = {VAL_ARRAY};
 spcl_val spcl_assert(spcl_fn_call f, vproc *vp) {
     static const valtype ASSERT_SIG[] = {VAL_UNDEF, VAL_STR};
-    spcl_sigcheck_opts(f, 1, ASSERT_SIG, vp);
+    spcl_sigcheck_opts(&f, 1, ASSERT_SIG, vp);
     if (f.args[0].val.x == 0)
 	return (f.n_args == 1)? spcl_make_err(E_ASSERT, vp, "") : spcl_make_err(E_ASSERT, vp, "%s", f.args[1].val.s);
     return spcl_make_num(f.args[0].val.x);
 }
 
 spcl_val spcl_typeof(spcl_fn_call f, vproc *vp) {
-    spcl_sigcheck(f, ANY1_SIG, vp);
+    spcl_sigcheck(&f, ANY1_SIG, vp);
     spcl_val sto = (spcl_val){0};
     sto.type = VAL_STR;
     //handle instances as a special case
     if (f.args[0].type == VAL_INST) {
+	/*TODO: fix
 	spcl_val t = spcl_find(f.args[0].val.c, s8("__type__"));
 	if (t.type == VAL_STR)
-	    return t;
+	    return t;*/
 	return spcl_make_none();
     }
     sto.n_els = strlen(valnames[f.args[0].type])+1;
@@ -645,34 +686,39 @@ spcl_val spcl_typeof(spcl_fn_call f, vproc *vp) {
     return sto;
 }
 spcl_val spcl_len(spcl_fn_call f, vproc *vp) {
-    spcl_sigcheck(f, ANY1_SIG, vp);
+    spcl_sigcheck(&f, ANY1_SIG, vp);
     return spcl_make_num(f.args[0].n_els);
 }
 //create a list with undefined elements
-static const valtype LIST_SIG[] = {VAL_NUM};
-spcl_val spcl_list(spcl_fn_call f, vproc *vp) {
-    spcl_sigcheck(f, LIST_SIG, vp);
-    if (f.args[0].val.x < 0)
+static const valtype LIST_SIG[] = {VAL_INT};
+spcl_val spcl_list(spcl_fn_call f, vproc *vp) { 
+    spcl_sigcheck(&f, LIST_SIG, vp);
+    if (f.args[0].val.i < 0)
 	return spcl_make_err(E_OUT_OF_RANGE, vp, "cannot create list with negative number of elements");
     spcl_val ret;
     ret.type = VAL_LIST;
-    ret.n_els = (size_t)(f.args[0].val.x);
+    ret.n_els = (size_t)(f.args[0].val.i);
     ret.val.l = xmalloc(sizeof(spcl_val)*ret.n_els, vp);
     memset(ret.val.l, 0, sizeof(spcl_val)*ret.n_els);
     return ret;
 }
-static const valtype RANGE_SIG[] = {VAL_NUM, VAL_NUM, VAL_NUM};
+static const valtype RANGE_SIG[] = {VAL_INT, VAL_INT, VAL_NUM};
 spcl_val spcl_range(spcl_fn_call f, vproc *vp) {
-    spcl_sigcheck_opts(f, 1, RANGE_SIG, vp);
-    double min, max, inc;
+    if (f.n_args > 2 && f.args[2].type == VAL_INT) {
+	f.args[2].type = VAL_NUM;
+	f.args[2].val.x = (double)(f.args[2].val.i);
+    }
+    spcl_sigcheck_opts(&f, 1, RANGE_SIG, vp);
+    int min, max;
+    double inc;
     //interpret arguments depending on how many were provided
     if (f.n_args == 1) {
 	min = 0;
-	max = f.args[0].val.x;
+	max = f.args[0].val.i;
 	inc = 1;
     } else {
-	min = f.args[0].val.x;
-	max = f.args[1].val.x;
+	min = f.args[0].val.i;
+	max = f.args[1].val.i;
 	inc = 1;
     }
     if (f.n_args >= 3)
@@ -684,13 +730,13 @@ spcl_val spcl_range(spcl_fn_call f, vproc *vp) {
     ret.type = VAL_ARRAY;
     ret.n_els = (max - min) / inc;
     ret.val.a = xmalloc(sizeof(double)*ret.n_els, vp);
-    for (size_t i = 0; i < ret.n_els; ++i)
+    for (usize i = 0; i < ret.n_els; ++i)
 	ret.val.a[i] = i*inc + min;
     return ret;
 }
 static const valtype LINSPACE_SIG[] = {VAL_NUM, VAL_NUM, VAL_NUM};
 spcl_val spcl_linspace(spcl_fn_call f, vproc *vp) {
-    spcl_sigcheck(f, LINSPACE_SIG, vp);
+    spcl_sigcheck(&f, LINSPACE_SIG, vp);
     spcl_val ret;
     ret.type = VAL_ARRAY;
     ret.n_els = (size_t)(f.args[2].val.x);
@@ -709,7 +755,7 @@ STACK_DEF(spcl_val,LST_MAX)
 STACK_DEF(size_t,LST_MAX)
 static const valtype FLATTEN_SIG[] = {VAL_LIST};
 spcl_val spcl_flatten(spcl_fn_call f, vproc *vp) {
-    spcl_sigcheck(f, FLATTEN_SIG, vp);
+    spcl_sigcheck(&f, FLATTEN_SIG, vp);
     spcl_val ret = spcl_make_none();
     spcl_val cur_list = f.args[0];
     //flattening an empty list is the identity op.
@@ -881,7 +927,7 @@ spcl_val spcl_print(spcl_fn_call f, vproc *vp) {
  */
 static const valtype ARRAY_SIG[] = {VAL_LIST};
 spcl_val spcl_array(spcl_fn_call f, vproc *vp) {
-    spcl_sigcheck(f, ARRAY_SIG, vp);
+    spcl_sigcheck(&f, ARRAY_SIG, vp);
     //treat matrices with one row as vectors
     if (f.n_args == 1) {
 	if (f.args[0].val.l[0].type == VAL_LIST)
@@ -941,11 +987,11 @@ spcl_val spcl_vec(spcl_fn_call f, vproc *vp) {
  * FN: the function to wrap
  */
 #define WRAP_MATH_FN(FN) spcl_val TYPED(spcl,FN)(spcl_fn_call f, vproc *vp) {		\
-    spcl_val sto = get_sigerr(f, SIGLEN(NUM1_SIG), SIGLEN(NUM1_SIG), NUM1_SIG, vp);	\
+    spcl_val sto = get_sigerr(&f, SIGLEN(NUM1_SIG), SIGLEN(NUM1_SIG), NUM1_SIG, vp);	\
     if (sto.type == 0)									\
 	return spcl_make_num( FN(f.args[0].val.x) );					\
     cleanup_spcl_val(&sto, vp);								\
-    sto = get_sigerr(f, SIGLEN(ARR1_SIG), SIGLEN(ARR1_SIG), ARR1_SIG, vp);		\
+    sto = get_sigerr(&f, SIGLEN(ARR1_SIG), SIGLEN(ARR1_SIG), ARR1_SIG, vp);		\
     if (sto.type == 0) {								\
 	sto.type = VAL_ARRAY;								\
 	sto.n_els = f.args[0].n_els;							\
@@ -979,7 +1025,7 @@ WRAP_MATH_FN(fabs)
  */
 spcl_val spcl_strtod(spcl_fn_call f, vproc *vp) {
     static const valtype STRTOD_SIG[] = {VAL_STR, VAL_NUM};
-    spcl_sigcheck_opts(f, 1, STRTOD_SIG, vp);
+    spcl_sigcheck_opts(&f, 1, STRTOD_SIG, vp);
 
     //create aliases so we have less typing
     char* s = f.args[0].val.s;
@@ -1110,13 +1156,13 @@ spcl_val spcl_make_fn(const char* name, psize n_ret, lib_call p_exec, vproc *vp)
     ret.val.f = make_spcl_uf_ex(p_exec, vp);
     return ret;
 }
-spcl_val spcl_make_inst(spcl_inst* parent, const char* s, vproc *vp) {
+spcl_val spcl_make_inst(const char *s, vproc *vp) {
     spcl_val v;
     v.type = VAL_INST;
-    v.val.c = make_spcl_inst(parent, vp);
+    v.val.c = make_spcl_inst(vp);
     if (s && s[0] != 0) {
 	spcl_val tmp = spcl_make_str(s, strlen(s), vp);
-	spcl_set_sub_val(v.val.c, "__type__", tmp, 0, vp);
+	spcl_set_inst_valn(v.val.c, s8("__type__"), tmp, 0, vp);
     }
     return v;
 }
@@ -1300,12 +1346,10 @@ spcl_val spcl_cast(spcl_val v, valtype t, vproc *vp) {
 	    return ret;
 	} else if (v.type == VAL_INST) {
 	    //instance -> list
-	    ret.n_els = v.val.c->n_memb;
+	    ret.n_els = v.val.c->cls->n_memb;
 	    ret.val.l = xmalloc(sizeof(spcl_val)*ret.n_els, vp);
-	    memset(ret.val.l, 0, sizeof(spcl_val)*ret.n_els);
-	    for (size_t i = con_it_next(v.val.c, 0); i < con_size(v.val.c); i = con_it_next(v.val.c, i+1))
-		ret.val.l[i] = copy_spcl_val(v.val.c->table[i].v, vp);
-	    ret.n_els = v.n_els;
+	    for (usize i = 0; i < ret.n_els; ++i)
+		ret.val.l[i] = copy_spcl_val(v.val.c->vals[i], vp);
 	    return ret;
 	} else if (v.type == VAL_MAT) {
 	    //matrices are basically just an alias for lists
@@ -1732,17 +1776,17 @@ static inline size_t index_to_abs(spcl_val* ind, size_t max_n, vproc *vp) {
 }
 
 //non-cryptographically hash the string str reading only the first n bytes
-static inline size_t fnv_1(s8 str, unsigned char t_bits) {
+static inline usize fnv_1(s8 str) {
     if (str.s == NULL || str.n == 0)
 	return 0;
-    size_t ret = FNV_OFFSET;
-    for (size_t i = 0; i < str.n/* && str.s[i]*/; ++i) {
+    usize ret = FNV_OFFSET;
+    for (usize i = 0; i < str.n/* && str.s[i]*/; ++i) {
 	if (!is_whitespace(str.s[i])) {
 	    ret = ret^str.s[i];
-	    ret = ret*FNV_PRIME;
+	    ret *= FNV_PRIME;
 	}
     }
-    return ((ret >> t_bits) ^ ret) % (1 << t_bits);
+    return ret;
     /**TODO: try using this if the above gives poor dispersion
 #if TABLE_BITS > 15
     return (ret >> t_bits) ^ (ret & TABLE_MASK(t_bits));
@@ -1754,24 +1798,28 @@ static inline size_t fnv_1(s8 str, unsigned char t_bits) {
 
 /**
  * Get the index i that contains the string name
- * c: the spcl_inst to look in
+ * d: the dictionary to search inside
  * name: the name to look for
  * ind: the location where we find the matching index
  * returns: 1 if a match was found, 0 otherwise
  */
-static inline int find_ind(const struct spcl_inst* c, s8 name, psize* ind) {
-    size_t ii = fnv_1(name, c->t_bits);
-    size_t i = ii;
-    while (c->table[i].s.n) {
-	//if (s8cmp(name, c->table[i].s) == 0) {
-	if (s8eq(name, c->table[i].s)) {
+static inline int find_ind(spcl_dict *d, s8 name, usize* ind) {
+    if (!d)
+	return 0;
+    //crash if converting from psize to usize will overflow
+    assert(d->t_bits < sizeof(usize)*8 - 2);
+    //compute the hash, starting index and step size
+    usize i = fnv_1(name);
+    usize mask = ((1 << d->t_bits) - 1);
+    usize step = (i >> (sizeof(usize) - d->t_bits)) | 1;
+    i = i & mask;
+    //step until we find an empty slot
+    while (d->table[i].name.s) {
+	if (s8eq(name, d->table[i].name)) {
 	    *ind = i;
 	    return 1;
 	}
-	//i = (i+1) if i+1 < table_size or 0 otherwise (note table_size == con_size(c))
-	i = (i+1) & (con_size(c)-1);
-	if (i == ii)
-	    break;
+	i = (i+step) & mask;
     }
     *ind = i;
     return 0;
@@ -1781,28 +1829,27 @@ static inline int find_ind(const struct spcl_inst* c, s8 name, psize* ind) {
  * Grow the spcl_inst if necessary
  * returns: 1 if growth was performed
  */
-static inline int grow_inst(struct spcl_inst* c, vproc *vp) {
-    if (c && c->n_memb*GROW_LOAD_DEN > con_size(c)*GROW_LOAD_NUM) {
-	//create a new spcl_inst with twice as many elements
-	struct spcl_inst nc;
-	nc.parent = c->parent;
-	nc.t_bits = c->t_bits + 1;
-	nc.n_memb = 0;
-	nc.table = xmalloc(sizeof(name_val_pair)*con_size(&nc), vp);
-	memset(nc.table, 0, sizeof(name_val_pair)*con_size(&nc));
-	//we have to rehash every member in the old table
-	for (size_t i = 0; i < con_size(c); ++i) {
-	    if (c->table[i].s.n == 0)
+static inline int grow_dict(spcl_dict *d, vproc *vp) {
+    if (d && d->n_memb*GROW_LOAD_DEN > con_size(d)*GROW_LOAD_NUM) {
+	//we need to keep the old dictionary so everything can be rehashed
+	spcl_dict newd;
+	newd.t_bits = d->t_bits+1;
+	newd.n_memb = 0;
+	newd.table = xmalloc(sizeof(_hash_item)*con_size(&newd), vp);
+	memset(newd.table, 0, sizeof(_hash_item)*con_size(&newd));
+	usize mask = ((1 << newd.t_bits) - 1);
+	//rehash
+	for (usize i = 0; i < con_size(d); ++i) {
+	    //skip empty entries
+	    if (d->table[i].name.s == NULL)
 		continue;
-	    //only move non-null members
-	    psize new_ind;
-	    if (!find_ind(&nc, c->table[i].s, &new_ind))
-		++nc.n_memb;
-	    nc.table[new_ind] = c->table[i];
+	    usize j;
+	    if (!find_ind(&newd, d->table[i].name, &j))
+		++newd.n_memb;
+	    newd.table[j] = d->table[i];
 	}
-	//deallocate old table and replace it with the new one
-	xfree(c->table, vp);
-	*c = nc;
+	xfree(d->table, vp);
+	*d = newd;
 	return 1;
     }
     return 0;
@@ -1828,67 +1875,56 @@ static inline void setup_builtins(vproc *vp) {
     spcl_add_fn(spcl_print,	"print", vp);
     //TODO: this is a really dumb way of adding namespaces
     //math stuff
-    spcl_val tmp = spcl_make_inst(vp->c, "math", vp);
-    spcl_inst* math_c = tmp.val.c;
-    spcl_set_sub_val(math_c, "pi", 	spcl_make_num(M_PI), 0, vp);
-    spcl_set_sub_val(math_c, "e", 	spcl_make_num(M_E), 0, vp);
-    spcl_add_sub_fn(math_c, spcl_sin,	"sin", vp);
-    spcl_add_sub_fn(math_c, spcl_cos,	"cos", vp);
-    spcl_add_sub_fn(math_c, spcl_tan,	"tan", vp);
-    spcl_add_sub_fn(math_c, spcl_asin,	"asin", vp);
-    spcl_add_sub_fn(math_c, spcl_acos,	"acos", vp);
-    spcl_add_sub_fn(math_c, spcl_atan,	"atan", vp);
-    spcl_add_sub_fn(math_c, spcl_exp,	"exp", vp);
-    spcl_add_sub_fn(math_c, spcl_log,	"log", vp);
-    spcl_add_sub_fn(math_c, spcl_sqrt,	"sqrt", vp);
-    spcl_add_sub_fn(math_c, spcl_floor,	"floor", vp);
-    spcl_add_sub_fn(math_c, spcl_ceil,	"ceil", vp);
-    spcl_add_sub_fn(math_c, spcl_fabs,	"abs", vp);
+    spcl_val tmp = spcl_make_inst("namespace", vp);
+    spcl_inst *math_c = tmp.val.c;
+    spcl_set_inst_valn(math_c, s8("pi"), 	spcl_make_num(M_PI), 0, vp);
+    spcl_set_inst_valn(math_c, s8("e"), 	spcl_make_num(M_E), 0, vp);
+    spcl_add_inst_fn(math_c, spcl_sin,	"sin", vp);
+    spcl_add_inst_fn(math_c, spcl_cos,	"cos", vp);
+    spcl_add_inst_fn(math_c, spcl_tan,	"tan", vp);
+    spcl_add_inst_fn(math_c, spcl_asin,	"asin", vp);
+    spcl_add_inst_fn(math_c, spcl_acos,	"acos", vp);
+    spcl_add_inst_fn(math_c, spcl_atan,	"atan", vp);
+    spcl_add_inst_fn(math_c, spcl_exp,	"exp", vp);
+    spcl_add_inst_fn(math_c, spcl_log,	"log", vp);
+    spcl_add_inst_fn(math_c, spcl_sqrt,	"sqrt", vp);
+    spcl_add_inst_fn(math_c, spcl_floor,	"floor", vp);
+    spcl_add_inst_fn(math_c, spcl_ceil,	"ceil", vp);
+    spcl_add_inst_fn(math_c, spcl_fabs,	"abs", vp);
     spcl_set_val("math", tmp, 0, vp);
-    tmp = spcl_make_inst(vp->c, "sys", vp);
+    tmp = spcl_make_inst("sys", vp);
     spcl_set_val("sys", tmp, 0, vp);
 }
 
-struct spcl_inst* make_spcl_inst(spcl_inst* parent, vproc *vp) {
-    spcl_inst* c = xmalloc(sizeof(spcl_inst), vp);
-    c->parent = parent;
-    c->n_memb = 0;
-    c->t_bits = DEF_TAB_BITS;
-    //double the allocated size for root insts (since they're likely to hold more stuff)
-    if (!parent) c->t_bits++;
-    c->table = xmalloc(sizeof(name_val_pair)*con_size(c), vp);
-    memset(c->table, 0, sizeof(name_val_pair)*con_size(c));
-    if (!parent) {
-	//setup_builtins(c);
-    }
+struct spcl_inst* make_spcl_inst(vproc *vp) {
+    spcl_inst *c = xmalloc(sizeof(spcl_inst), vp);
+    c->cls = xmalloc(sizeof(spcl_dict), vp);
+    init_spcl_dict(c->cls, vp);
+    c->vals = NULL;
     return c;
 }
 
-struct spcl_inst* copy_spcl_inst(const spcl_inst* o, vproc *vp) {
+struct spcl_inst* copy_spcl_inst(spcl_inst *o, vproc *vp) {
     if (!o)
 	return NULL;
     spcl_inst* c = xmalloc(sizeof(spcl_inst), vp);
-    c->table = xmalloc(sizeof(name_val_pair)*con_size(o), vp);
-    memset(c->table, 0, sizeof(name_val_pair)*con_size(o));
-    c->parent = o->parent;
-    c->n_memb = o->n_memb;
-    c->t_bits = o->t_bits;
-    for (size_t i = con_it_next(o, 0); i < con_size(o); i = con_it_next(o, i+1)) {
-	c->table[i].s.s = strdup(o->table[i].s.s);
-	c->table[i].s.n = o->table[i].s.n;
-	c->table[i].v = copy_spcl_val(o->table[i].v, vp);
-    }
+    c->cls = xmalloc(sizeof(spcl_dict), vp);
+    copy_spcl_dict(c->cls, o->cls, vp);
+    for (size_t i = 0; i < c->cls->n_memb; ++i)
+	c->vals[i] = copy_spcl_val(o->vals[i], vp);
     return c;
 }
 
-void destroy_spcl_inst(struct spcl_inst* c, vproc *vp) {
+void destroy_spcl_inst(spcl_inst *c, vproc *vp) {
     if (!c)
 	return;
     //erase the hash table
-    for (size_t i = con_it_next(c, 0); i < con_size(c); i = con_it_next(c,i+1))
-	cleanup_name_val_pair(c->table[i]);
-    xfree(c->table, vp);
-    xfree(c, vp);
+    cleanup_spcl_dict(c->cls, vp);
+    xfree(c->cls, vp);
+    for (size_t i = 0; i < c->cls->n_memb; ++i)
+	cleanup_spcl_val(c->vals+i, vp);
+    xfree(c->cls, vp);
+    xfree(c->vals, vp);
 }
 /**
  * Identify the keyword starting at rs->start up to rs->end. If a key is found, then rs->start is updated to the first character after the keyword.
@@ -2394,6 +2430,7 @@ static inline unfold_res _list_def_unfold(vproc *vp, optree_nd *nd, usize *insts
     vproc_exec(vp, insts, ret.n_written);
     return ret;
 }
+static inline unfold_res _tup_unfold(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, spcl_val *er) {}
 /**
  * Unfold a function call
  */
@@ -2401,14 +2438,16 @@ static inline unfold_res _call_unfold(vproc *vp, optree_nd *nd, usize *insts, us
     unfold_res ret = (unfold_res){0};
     if (nd->l == NULL || ndflag(nd->l, ND_ISLF) == 0) {
 	*er = spcl_make_err(E_BAD_SYNTAX, vp, "expected function name before call");
+	ret.type = VAL_ERR;
 	return ret;
     }
     unfold_res fres = unfold_optree(vp, nd->l, insts, n_insts, er);
-    spcl_val fval = (fres.l == L_STK)? vp->stack[fres.v.st] : (fres.l == L_LIT)? spcl_make_int(fres.v.st) : *fres.v.hp;
-    if (fval.type != VAL_FN) {
-	*er = spcl_make_err(E_BAD_TYPE, vp, "cannot call non-function %s", valnames[fval.type]);
+    if (fres.type != VAL_FN || fres.l == L_LIT) {
+	*er = spcl_make_err(E_BAD_TYPE, vp, "cannot call non-function %s", valnames[fres.type]);
+	ret.type = VAL_ERR;
 	return ret;
     }
+    spcl_val fval = (fres.l == L_STK)? vp->stack[fres.v.st+vp->sp] : *fres.v.hp;
     //now push each argument onto the stack
     psize n_els = 0;
     int allcnst = 1;
@@ -2417,6 +2456,15 @@ static inline unfold_res _call_unfold(vproc *vp, optree_nd *nd, usize *insts, us
     while (tmp) {
 	//if its a comma, unfold the appended value. Otherwise unfold the value itself
 	optree_nd *to_unfold = ((tmp->flags & ND_ISOP) && tmp->v.val.i == OPTR_APPND)? tmp->l : tmp;
+	//exit on an empty node
+	if (to_unfold->flags == 0) {
+	    if ((tmp->parent->flags & ND_ISOP) == 0 || tmp->parent->v.val.i != OPTR_CALL) {
+		*er = spcl_make_err(E_BAD_SYNTAX, vp, "bad comma initialization");
+		ret.type = VAL_ERR;
+		return ret;
+	    }
+	    break;
+	}
 	unfold_res tr = unfold_optree(vp, to_unfold, insts, n_insts, er);
 	ret.n_written += tr.n_written;
 	n_before = ret.n_written;
@@ -2465,6 +2513,7 @@ static inline unfold_res _call_unfold(vproc *vp, optree_nd *nd, usize *insts, us
     ret.l = L_STK;
     ret.v.st = 0;
     ret.n_pushed = 0;
+    return ret;
     //calls always push their return values to the stack
     //TODO: constant propagation, this is a little tricky since we first must ensure the function called has no side effects
 }
@@ -2511,6 +2560,8 @@ static inline unfold_res const_prop(unfold_res def, vproc *vp, optree_nd *nd) {
  * nd: the optree to unfold
  * insts: a buffer to write instructions to
  * n_insts: the length of the buffer. If there were insufficient elements, then -1 is returned.
+ * st_frame: the stack index of the current frame. (i.e. in a function call, set this to the index of the argument number value)
+ * dict: the dictionary to use for name lookups
  * returns: an integer value with the number of instructions written on success or an error
  */
 unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, spcl_val *er) {
@@ -2528,16 +2579,19 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	s8 str = (s8){nd->v.val.s, nd->v.n_els};
 	/*if (find_ind(vp->c, str, &i))
 	    ret.v.hp = &(vp->c->table[i].v);*/
-	if (find_ind(vp->c, str, &i)) {
-	    i = vp->c->table[i].v.val.i;
+	if (find_ind(&vp->d, str, &i)) {
+	    i = vp->d.table[i].ind;
 	    if (i < vp->sp) {
 		*er = spcl_make_err(E_UNDEF, vp, "token \"%.*s\" used before assignment", str.n, str.s);
+		ret.type = VAL_ERR;
 		return ret;
 	    }
 	    ret.type = vp->stack[i].type;
 	    ret.v.st = i - vp->sp;
 	} else {
 	    *er = spcl_make_err(E_UNDEF, vp, "token \"%.*s\" not defined", str.n, str.s);
+	    ret.type = VAL_ERR;
+	    return ret;
 	}
     } else if (nd->flags & ND_ISOP) {
 	optree_nd *trn_parent = NULL;
@@ -2571,19 +2625,43 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    nd = nd->r;
 	    if (!ndflag(nd, ND_ISOP) || nd->v.val.i != OPTR_TRNC) {
 		*er = spcl_make_err(E_BAD_SYNTAX, vp, "expected \':\' in ternary");
+		ret.type = VAL_ERR;
 		return ret;
 	    }
 	} else if (nd->v.val.i == OPTR_ASSGN) {
+	    //check that we're assigning to a valid name
+	    //TODO: allow for assignment to tuples
+	    if (nd->l->flags & ND_ISLF == 0) {
+		*er = spcl_make_err(E_BAD_SYNTAX, vp, "invalid lvalue for assignment");
+		ret.type = VAL_ERR;
+		return ret;
+	    }
 	    //if its an assignment, then we need to perform that action before there is any complaint about missing values
 	    ret = unfold_optree(vp, nd->r, insts, n_insts, er);
-	    //if unfolding the right side pushed to the stack, then we can just assign that value. Otherwise we have to push.
-	    if (ret.l != L_STK) {
-		insts[ret.n_written++] = gen_op2(OP_PUSH, ret.l);
-		insts[ret.n_written++] = (ret.l == L_LIT)? ret.v.st : (usize)ret.v.hp;
-		ret.v.st = 0;
+	    s8 lname = (s8){nd->l->v.val.s, nd->l->v.n_els};
+	    usize ti;
+	    //now we need to assign the value
+	    if (!find_ind(&vp->d, lname, &ti)) {
+		//if there isn't already an element with that name we have to expand the table and add a member
+		if (grow_dict(&vp->d, vp))
+		    find_ind(&vp->d, lname, &ti);
+		vp->d.table[ti].name = s8dup(lname, vp);
+		//we have to unfold the right side and push it to the stack
+		if (ret.l != L_STK) {
+		    insts[ret.n_written++] = gen_op2(OP_PUSH, ret.l);
+		    insts[ret.n_written++] = (ret.l == L_LIT)? ret.v.st : (usize)ret.v.hp;
+		    ret.v.st = 0;
+		}
+		vproc_exec(vp, insts, ret.n_written);
+		vp->d.table[ti].ind = ret.v.st + vp->sp;
+		++vp->d.n_memb;
+	    } else {
+		//if there already is a stack address allocated, we need to move to the correct spot
+		insts[ret.n_written++] = gen_op3(OP_MOV, L_STK, ret.l);
+		insts[ret.n_written++] = vp->d.table[ti].ind + vp->sp + ret.n_pushed;
+		insts[ret.n_written++] = (ret.l == L_STK) ? ret.v.st : (ret.l == L_LIT)? ret.v.st : (usize)ret.v.hp;
+		vproc_exec(vp, insts, ret.n_written);
 	    }
-	    vproc_exec(vp, insts, ret.n_written);
-	    spcl_set_valn(vp->c, nd->l->v.val.s, nd->l->v.n_els, spcl_make_int(vp->sp), 0, vp);
 	    return ret;
 	}
 	//otherwise, unfold both children and check for errors
@@ -2684,10 +2762,10 @@ spcl_val spcl_parse_line(vproc *vp, const char* str) {
     psize sp_before = vp->sp;
     usize inst_buf[TMP_INST_SIZE];
     unfold_res res = unfold_optree(vp, nd, inst_buf, TMP_INST_SIZE, &er);
-    if (res.type == VAL_UNDEF || er.type == VAL_ERR)
+    if (res.type == VAL_ERR || er.type == VAL_ERR)
 	return er;
     //find the return value
-    if (res.l == L_LIT)
+    if (res.l == L_LIT && res.type != VAL_UNDEF)
 	er = (res.type == VAL_NUM)? spcl_make_num(res.v.st) : spcl_make_int(res.v.st);
     else if (res.l == L_STK)
 	er = vp->stack[vp->sp + res.v.st];
@@ -2792,7 +2870,7 @@ static inline spcl_val _spcl_index(spcl_val v, spcl_val ind, vproc *vp) {
 static inline int _get_op_n_insts(usize inst) {
     switch (inst & CODE_MASK) {
     case OP_SRCH:	return 3;
-    case OP_STNM:	return 3;
+    case OP_ASSGN:	return 3;
     case OP_REA:	return 3;
     case OP_WEA:	return 3;
     case OP_PUSH:	return 2;
@@ -2864,15 +2942,14 @@ vproc *make_vproc() {
     vp->pc = 0;
     vp->sp = getpagesize();
     init_arena(&vp->a, VP_ARENA_N, vp);
-    //TODO: move this to function definitions
-    vp->c = make_spcl_inst(NULL, vp);
+    init_spcl_dict(&vp->d, vp);
     setup_builtins(vp);
     return vp;
 }
 void destroy_vproc(vproc *vp) {
     if (!vp)
 	return;
-    destroy_spcl_inst(vp->c, vp);
+    cleanup_spcl_dict(&vp->d, vp);
     cleanup_arena(&vp->a, vp);
     munmap(vp->stack, sizeof(spcl_val)*getpagesize());
     munmap(vp->heap, sizeof(spcl_val)*getpagesize());
@@ -2910,7 +2987,7 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
 	    destroy_spcl_fstream(fs);
 	    pc += 3;
 	break;
-	case OP_STNM:
+	case OP_ASSGN:
 	    assert(pc+2 < n_insts);
 	    spcl_set_valn(vp->c, dst->val.s, dst->n_els, *src, 1);
 	    pc += 3;
@@ -2924,7 +3001,7 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
 	    //TODO: refactor spcl_fn_call out of existance
 	    spcl_fn_call fc;
 	    fc.n_args = tmpd.val.i;
-	    for (psize i = fc.n_args-1; i > 0; --i)
+	    for (psize i = fc.n_args-1; i >= 0; --i)
 		fc.args[i] = vp->stack[vp->sp++];
 	    vp->stack[--vp->sp] = spcl_uf_eval(dst->val.f, fc, vp);
 	    pc += 2;
@@ -3137,36 +3214,60 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
     return (spcl_val){0};
 }
 
-void spcl_set_valn(spcl_inst *c, char* p_name, size_t namelen, spcl_val p_val, int copy, vproc *vp) {
+void spcl_set_valn(vproc *vp, s8 p_name, spcl_val p_val, int copy) {
     //generate a fake name if none was provided
-    if (!p_name || p_name[0] == 0) {
+    if (!p_name.s || p_name.n == 0) {
 	char tmp[SPCL_STR_BSIZE];
-	snprintf(tmp, SPCL_STR_BSIZE, "\e_%lu", c->n_memb);
-	return spcl_set_valn(c, tmp, namelen, p_val, copy, vp);
+	snprintf(tmp, SPCL_STR_BSIZE, "\e_%lu", vp->d.n_memb);
+	spcl_set_valn(vp, s8(tmp), p_val, copy);
     }
-    s8 tmp_name = (s8){p_name, namelen};
-    size_t ti = fnv_1(tmp_name, c->t_bits);
-    if (!find_ind(c, tmp_name, &ti)) {
+    usize ti;
+    if (!find_ind(&vp->d, p_name, &ti)) {
 	//if there isn't already an element with that name we have to expand the table and add a member
-	if (grow_inst(c, vp))
-	    find_ind(c, tmp_name, &ti);
-	c->table[ti].s.s = strndup(p_name, namelen);
-	c->table[ti].s.n = namelen;
-	c->table[ti].v = (copy)? copy_spcl_val(p_val, vp) : p_val;
-	++c->n_memb;
+	if (grow_dict(&vp->d, vp))
+	    find_ind(&vp->d, p_name, &ti);
+	vp->d.table[ti].name = s8dup(p_name, vp);
+	vp->d.table[ti].ind = --vp->sp;
+	vp->stack[vp->sp] = (copy)? copy_spcl_val(p_val, vp) : p_val;
+	++vp->d.n_memb;
     } else {
 	//otherwise we need to cleanup the old spcl_val and add the new
-	cleanup_spcl_val( &(c->table[ti].v), NULL );
-	c->table[ti].v = (copy)? copy_spcl_val(p_val, vp) : p_val;
+	spcl_val *tmpv = vp->stack + vp->d.table[ti].ind;
+	cleanup_spcl_val( tmpv, NULL );
+	*tmpv = (copy)? copy_spcl_val(p_val, vp) : p_val;
     }
 }
-spcl_val spcl_find(spcl_inst *c, s8 name) {
+void spcl_set_inst_valn(spcl_inst *c, s8 p_name, spcl_val p_val, int copy, vproc *vp) {
+    //generate a fake name if none was provided
+    if (!p_name.s || p_name.n == 0) {
+	char tmp[SPCL_STR_BSIZE];
+	snprintf(tmp, SPCL_STR_BSIZE, "\e_%lu", c->cls->n_memb);
+	spcl_set_inst_valn(c, s8(tmp), p_val, copy, vp);
+    }
+    usize ti;
+    if (!find_ind(c->cls, p_name, &ti)) {
+	//if there isn't already an element with that name we have to expand the table and add a member
+	if (grow_dict(c->cls, vp))
+	    find_ind(c->cls, p_name, &ti);
+	c->cls->table[ti].name = s8dup(p_name, vp);
+	c->cls->table[ti].ind = c->cls->n_memb++;
+	//finally, we have to grow the value table
+	c->vals = xrealloc(c->vals, sizeof(spcl_val)*c->cls->n_memb, vp);
+	c->vals[c->cls->n_memb-1] = (copy)? copy_spcl_val(p_val, vp) : p_val;
+    } else {
+	//otherwise we need to cleanup the old spcl_val and add the new
+	spcl_val *tmpv = c->vals + c->cls->table[ti].ind;
+	cleanup_spcl_val(tmpv, NULL);
+	*tmpv = (copy)? copy_spcl_val(p_val, vp) : p_val;
+    }
+}
+/*spcl_val spcl_find(vproc *c, s8 name) {
     size_t ti = fnv_1(name, c->t_bits);
     if (!find_ind(c, name, &ti)) {
 	return (spcl_val){0};
     }
     return c->table[ti].v;
-}
+}*/
 int spcl_find_object(vproc *vp, const char* str, const char* typename, spcl_inst** sto) {
     spcl_val vobj = spcl_parse_line(vp, str);
     if (vobj.type != VAL_INST)

@@ -52,9 +52,9 @@ typedef enum {BLK_UNDEF, BLK_MISC, BLK_INVERT, BLK_TRANSFORM, BLK_DATA, BLK_ROOT
 /**
  * Macro to set a value while automagically calculating the string length
  */
-#define spcl_set_val(name,val,copy,vp) spcl_set_valn(vp->c, name, strlen(name), val, copy, vp)
-#define spcl_set_sub_val(c,name,val,copy,vp) spcl_set_valn(c, name, strlen(name), val, copy, vp)
-#define make_spcl_fstream(NAME) make_spcl_fstreamn(NAME, strlen(NAME))
+#define spcl_set_val(name,val,copy,vp) spcl_set_valn(vp, s8(name), val, copy)
+#define spcl_set_sub_val(c,name,val,copy,vp) spcl_set_inst_valn(c, s8(name), val, copy, vp)
+#define make_spcl_fstream(name) make_spcl_fstreamn(name, strlen(name))
 /**
  * provides a handy macro which wraps get_sigerr and aborts execution of a function if an invalid signature was detected
  * FN_CALL: the name of the function
@@ -78,8 +78,8 @@ typedef enum {BLK_UNDEF, BLK_MISC, BLK_INVERT, BLK_TRANSFORM, BLK_DATA, BLK_ROOT
  * FN_CALL: the C function to add
  * NAME: the name of the function when calling from a spcl script
  */
-#define spcl_add_fn(fn_call,name,vp) spcl_set_valn(vp->c,name,strlen(name),spcl_make_fn(name,1,&fn_call,vp),0,vp);
-#define spcl_add_sub_fn(c,fn_call,name,vp) spcl_set_valn(c,name,strlen(name),spcl_make_fn(name,1,&fn_call,vp),0,vp);
+#define spcl_add_fn(fn_call,name,vp) spcl_set_valn(vp, s8(name), spcl_make_fn(name,1,&fn_call,vp), 0);
+#define spcl_add_inst_fn(c,fn_call,name,vp) spcl_set_inst_valn(c, s8(name), spcl_make_fn(name,1,&fn_call,vp), 0, vp);
 
 /** ======================================================== utility functions ======================================================== **/
 
@@ -143,18 +143,33 @@ void reset(arena *a);
 
 typedef struct {
     s8 name;
-    psize sp;
-} hash_item;
+    psize ind;
+} _hash_item;
+
+typedef struct {
+    _hash_item *table;
+    usize n_memb;
+    usize t_bits;
+} spcl_dict;
 
 //a virtual process
 typedef struct _vproc {
     void *heap;
     spcl_val *stack;
-    struct spcl_inst *c;
+    spcl_dict d;
     arena a;
     usize pc;		//program counter
     psize sp;		//stack pointer
 } vproc;
+
+/**
+ * Initialize a vproc struct by reading from a file
+ * fname: the name of the file to read
+ * argc: the number arguments
+ * argv: an array of arguments taken from the command-line. Note that callers should not directly pass argc,argv from int main(). Rather, argv should only include valid spclang commands. If you know that spclang commands start at the index i, then you should call spcl_inst_from_file(fname, argc-i, argv+(size_t)i).
+ * returns: on success, a pointer to a vproc which should be destroyed with a call to destroy_vproc, otherwise NULL is returned and destroy_vproc() is still safe
+ */
+vproc *spcl_read_file(const char* fname, int argc, const char** argv);
 
 /**
  * Setup a new virtual process along with its own callstack and registers.
@@ -164,6 +179,14 @@ vproc *make_vproc();
  * destroy the virtual process pointed to by vp and deallocate its memory
  */
 void destroy_vproc(vproc *vp);
+/**
+ * Set the spcl_val with a name matching p_name to a copy of p_val.
+ * name: the name of the variable to set
+ * new_val: the spcl_val to set the variable to
+ * copy: This is a boolean which, if true, performs a deep copy of new_val. Otherwise, only a shallow copy (move) is performed.
+ * move_assign: If set to true, then the spcl_val is directly moved into the spcl_inst. This can save some time.
+ */
+void spcl_set_valn(vproc *vp, s8 name, spcl_val new_val, int copy);
 /**
  * execute the instructions at insts[n_insts]
  */
@@ -253,7 +276,7 @@ spcl_val spcl_make_fn(const char* name, psize n_ret, lib_call p_exec, vproc *vp)
  * p: the parent of the current instance (i.e. its owner
  * s: the name of the type
  */
-spcl_val spcl_make_inst(struct spcl_inst* parent, const char* s, vproc *vp);
+spcl_val spcl_make_inst(const char* s, vproc *vp);
 /**
  * Compare two spcl_vals if appropriate, in a manner similar to strcmp.
  * returns: 0 if a==b, a positive spcl_val if a>b, and a negative spcl_val if a<b. If no comparison is possible, undefined is returned.
@@ -370,41 +393,39 @@ void cleanup_spcl_fn_call(spcl_fn_call* o);
 /** ============================ spcl_inst ============================ **/
 
 struct spcl_inst {
-    //members
-    name_val_pair* table;
-    struct spcl_inst* parent;
-    size_t n_memb;
-    unsigned char t_bits;//the log base-2 of the size of the table
+    spcl_dict *cls;
+    spcl_val *vals;
 };
 typedef struct spcl_inst spcl_inst;
 
 /**
- * Constructor for a new spcl_inst initialized with the contents of fname and optional command line arguments
- * fname: the name of the file to read
- * argc: the number arguments
- * argv: an array of arguments taken from the command-line. Note that callers should not directly pass argc,argv from int main(). Rather, argv should only include valid spclang commands. If you know that spclang commands start at the index i, then you should call spcl_inst_from_file(fname, argc-i, argv+(size_t)i).
- * returns: on success, a pointer to a vproc which should be destroyed with a call to destroy_vproc, otherwise NULL is returned and destroy_vproc() is still safe
- */
-vproc *spcl_read_file(const char* fname, int argc, const char** argv);
-/**
  * make an empty spcl_inst. The result must be destroyed using destroy_inst().
  * parent: the parent of this spcl_inst so that we can look up in scope (i.e. a function can access global variables)
  */
-struct spcl_inst* make_spcl_inst(spcl_inst* parent, vproc *vp);
+struct spcl_inst *make_spcl_inst(vproc *vp);
 /**
  * Create a deep copy of the spcl_inst o and return the result. The result must be destroyed using destroy_inst().
  */
-struct spcl_inst* copy_spcl_inst(const spcl_inst* o, vproc *vp);
+struct spcl_inst *copy_spcl_inst(spcl_inst *o, vproc *vp);
 /**
  * cleanup the spcl_inst c
  */
-void destroy_spcl_inst(spcl_inst* c, vproc *vp);
+void destroy_spcl_inst(spcl_inst *c, vproc *vp);
+/**
+ * set the value of the instance c to a name p_name and value p_val
+ * c: the instance to set
+ * p_name: the name of the value in c to set
+ * p_val: the value to assign to p_name
+ * copy: whether or not the value should be copied
+ * vp: the process on which c was allocated
+ */
+void spcl_set_inst_valn(spcl_inst *c, s8 p_name, spcl_val p_val, int copy, vproc *vp);
 /**
  * Search the spcl_inst for the variable with the matching name.
  * name: the name of the variable to set
  * returns: the matching spcl_val, no deep copies are performed
  */
-spcl_val spcl_find(spcl_inst* c, s8 name);
+spcl_val spcl_find(spcl_inst *c, s8 name);
 /**
  * Lookup the object named str in c and save the resulting spcl_inst to sto
  * c: the spcl_inst to search
@@ -465,14 +486,5 @@ int spcl_find_uint(vproc *vp, const char* str, unsigned* sto);
  * returns: 0 on success or -1 if the name str couldn't be found
  */
 int spcl_find_float(vproc *vp, const char* str, double* sto);
-/**
- * Set the spcl_val with a name matching p_name to a copy of p_val.
- * name: the name of the variable to set
- * namelen: the length of the name
- * new_val: the spcl_val to set the variable to
- * copy: This is a boolean which, if true, performs a deep copy of new_val. Otherwise, only a shallow copy (move) is performed.
- * move_assign: If set to true, then the spcl_val is directly moved into the spcl_inst. This can save some time.
- */
-void spcl_set_valn(spcl_inst *c, char* name, size_t namelen, spcl_val new_val, int copy, vproc *vp);
 
 #endif //READ_H
