@@ -595,50 +595,6 @@ TEST_CASE("operations") {
 	WARN(strcmp(tmp_val.val.e->msg, "expected \':\' in ternary") == 0);
 	cleanup_spcl_val(&tmp_val, vp);
     }
-    SUBCASE("Missing end graceful failure") {
-	safecpy(buf, "[1,2", SPCL_STR_BSIZE);
-	spcl_val tmp_val = spcl_parse_line(vp, buf);
-	REQUIRE(tmp_val.type == VAL_ERR);
-	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
-	INFO("message=", tmp_val.val.e->msg);
-	WARN(strcmp(tmp_val.val.e->msg, "expected matching \']\'") == 0);
-	cleanup_spcl_val(&tmp_val, vp);
-	safecpy(buf, "a(1,2", SPCL_STR_BSIZE);
-	tmp_val = spcl_parse_line(vp, buf);
-	REQUIRE(tmp_val.type == VAL_ERR);
-	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
-	INFO("message=", tmp_val.val.e->msg);
-	WARN(strcmp(tmp_val.val.e->msg, "expected matching \')\'") == 0);
-	cleanup_spcl_val(&tmp_val, vp);
-	safecpy(buf, "\"1,2", SPCL_STR_BSIZE);
-	tmp_val = spcl_parse_line(vp, buf);
-	REQUIRE(tmp_val.type == VAL_ERR);
-	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
-	INFO("message=", tmp_val.val.e->msg);
-	WARN(strcmp(tmp_val.val.e->msg, "expected matching \'\"\'") == 0);
-	cleanup_spcl_val(&tmp_val, vp);
-	safecpy(buf, "1,2]", SPCL_STR_BSIZE);
-	tmp_val = spcl_parse_line(vp, buf);
-	REQUIRE(tmp_val.type == VAL_ERR);
-	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
-	INFO("message=", tmp_val.val.e->msg);
-	WARN(strcmp(tmp_val.val.e->msg, "expected line end instead of \']\'") == 0);
-	cleanup_spcl_val(&tmp_val, vp);
-	safecpy(buf, "1,2)", SPCL_STR_BSIZE);
-	tmp_val = spcl_parse_line(vp, buf);
-	REQUIRE(tmp_val.type == VAL_ERR);
-	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
-	INFO("message=", tmp_val.val.e->msg);
-	WARN(strcmp(tmp_val.val.e->msg, "expected line end instead of \')\'") == 0);
-	cleanup_spcl_val(&tmp_val, vp);
-	safecpy(buf, "1,2\"", SPCL_STR_BSIZE);
-	tmp_val = spcl_parse_line(vp, buf);
-	REQUIRE(tmp_val.type == VAL_ERR);
-	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
-	INFO("message=", tmp_val.val.e->msg);
-	WARN(strcmp(tmp_val.val.e->msg, "expected line end instead of \'\"\'") == 0);
-	cleanup_spcl_val(&tmp_val, vp);
-    }
     destroy_vproc(vp);
 }
 
@@ -968,6 +924,50 @@ TEST_CASE("builtin functions") {
 		CHECK(tmp_val.val.l[i].val.a[j] == i*3 + j);
 	    }
 	}
+	cleanup_spcl_val(&tmp_val, vp);
+    }
+    SUBCASE("Missing end graceful failure") {
+	safecpy(buf, "[1,2", SPCL_STR_BSIZE);
+	spcl_val tmp_val = spcl_parse_line(vp, buf);
+	REQUIRE(tmp_val.type == VAL_ERR);
+	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
+	INFO("message=", tmp_val.val.e->msg);
+	WARN(strcmp(tmp_val.val.e->msg, "expected matching \']\'") == 0);
+	cleanup_spcl_val(&tmp_val, vp);
+	safecpy(buf, "a(1,2", SPCL_STR_BSIZE);
+	tmp_val = spcl_parse_line(vp, buf);
+	REQUIRE(tmp_val.type == VAL_ERR);
+	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
+	INFO("message=", tmp_val.val.e->msg);
+	WARN(strcmp(tmp_val.val.e->msg, "expected matching \')\'") == 0);
+	cleanup_spcl_val(&tmp_val, vp);
+	safecpy(buf, "\"1,2", SPCL_STR_BSIZE);
+	tmp_val = spcl_parse_line(vp, buf);
+	REQUIRE(tmp_val.type == VAL_ERR);
+	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
+	INFO("message=", tmp_val.val.e->msg);
+	WARN(strcmp(tmp_val.val.e->msg, "expected matching \'\"\'") == 0);
+	cleanup_spcl_val(&tmp_val, vp);
+	safecpy(buf, "1,2]", SPCL_STR_BSIZE);
+	tmp_val = spcl_parse_line(vp, buf);
+	REQUIRE(tmp_val.type == VAL_ERR);
+	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
+	INFO("message=", tmp_val.val.e->msg);
+	WARN(strcmp(tmp_val.val.e->msg, "expected line end instead of \']\'") == 0);
+	cleanup_spcl_val(&tmp_val, vp);
+	safecpy(buf, "1,2)", SPCL_STR_BSIZE);
+	tmp_val = spcl_parse_line(vp, buf);
+	REQUIRE(tmp_val.type == VAL_ERR);
+	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
+	INFO("message=", tmp_val.val.e->msg);
+	WARN(strcmp(tmp_val.val.e->msg, "expected line end instead of \')\'") == 0);
+	cleanup_spcl_val(&tmp_val, vp);
+	safecpy(buf, "1,2\"", SPCL_STR_BSIZE);
+	tmp_val = spcl_parse_line(vp, buf);
+	REQUIRE(tmp_val.type == VAL_ERR);
+	WARN(tmp_val.val.e->c == E_BAD_SYNTAX);
+	INFO("message=", tmp_val.val.e->msg);
+	WARN(strcmp(tmp_val.val.e->msg, "expected line end instead of \'\"\'") == 0);
 	cleanup_spcl_val(&tmp_val, vp);
     }
     destroy_vproc(vp);
