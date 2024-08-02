@@ -664,9 +664,9 @@ static const valtype ANY1_SIG[] = {VAL_UNDEF};
 static const valtype NUM1_SIG[] = {VAL_NUM};
 static const valtype ARR1_SIG[] = {VAL_ARRAY};
 spcl_val spcl_assert(spcl_fn_call f, vproc *vp) {
-    if (spcl_isfalse(f.args[0])
+    if (spcl_isfalse(f.args[0]))
 	return (f.n_args == 1)? spcl_make_err(E_ASSERT, vp, "") : spcl_make_err(E_ASSERT, vp, "%s", f.args[1].val.s);
-    return copy_spcl_val(f.args[0]);
+    return copy_spcl_val(f.args[0], vp);
 }
 
 spcl_val spcl_typeof(spcl_fn_call f, vproc *vp) {
@@ -2047,8 +2047,8 @@ static inline int char_to_digit(char c, int base) {
  */
 static inline spcl_val rs_to_numeric(read_state *rs, vproc *vp) {
     psize init_start = rs->start;
-    double flt_res=0;
-    int res=0, base=10, sign=1, digit=0, after_point=0;
+    double flt_res=0, after_point=0;
+    int res=0, base=10, sign=1, digit=0;
     char c = fs_get(rs->b, rs->start);
     //first decide on the sign
     if (c == '-') {
@@ -2077,7 +2077,7 @@ static inline spcl_val rs_to_numeric(read_state *rs, vproc *vp) {
 		//can't have more than one period
 		if (after_point)
 		    return spcl_make_err(E_BAD_SYNTAX, vp, "invalid numeric literal %.*s", rs->b->cache+init_start, rs->start-init_start+1);
-		after_point = 1;
+		after_point = 1.0/base;
 		flt_res = (double)res;
 		res = 0;
 	    } else if (c == 'e' || c == 'E') {
@@ -2086,16 +2086,19 @@ static inline spcl_val rs_to_numeric(read_state *rs, vproc *vp) {
 		if (exp.type != VAL_INT)
 		    return spcl_make_err(E_BAD_SYNTAX, vp, "invalid numeric literal %.*s", rs->b->cache+init_start, rs->start-init_start+1);
 		if (after_point)
-		    return spcl_make_num( sign*pow(base, exp.val.i)*(flt_res + pow(base, 1-after_point)*res) );
+		    return spcl_make_num( sign*pow(base, exp.val.i)*flt_res );
 		else
 		    return spcl_make_num(pow(base, exp.val.i)*(double)res*(double)sign);
 	    } else {
-		return (after_point)? spcl_make_num(sign*(flt_res + pow(base, 1-after_point)*res)) : spcl_make_int(sign*res);
+		return (after_point)? spcl_make_num(sign*flt_res) : spcl_make_int(sign*res);
 	    }
 	} else {
-	    if (after_point)
-		++after_point;
-	    res = res*base + digit;
+	    if (after_point) {
+		flt_res += digit*after_point;
+		after_point /= (double)base;
+	    } else {
+		res = res*base + digit;
+	    }
 	}
     }
     return (after_point)? spcl_make_num(sign*(flt_res + pow(base, 1-after_point)*res)) : spcl_make_int(sign*res);
