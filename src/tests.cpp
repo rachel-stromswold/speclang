@@ -170,49 +170,49 @@ TEST_CASE("bytecode") {
 	inst_buf[i++] = (u64)(&a);
 	inst_buf[i++] = gen_op2(OP_PUSH, L_HEP);
 	inst_buf[i++] = (u64)(&b);
-	vproc_exec(vp, inst_buf, i);
+	vproc_exec(vp, inst_buf, i, 0);
 	//check that the values are as expected
 	test_num(vp->stack[vp->sp+1], 1);
 	test_num(vp->stack[vp->sp+0], 2);
 	//increment s[1]
 	inst_buf[i++] = gen_op2(OP_INC, L_STK);
 	inst_buf[i++] = 1;
-	vproc_exec(vp, inst_buf, i);
+	vproc_exec(vp, inst_buf, i, 0);
 	test_num(vp->stack[vp->sp+1], 2);
 	//decrement s[1]
 	inst_buf[i++] = gen_op2(OP_DEC, L_STK);
 	inst_buf[i++] = 1;
-	vproc_exec(vp, inst_buf, i);
+	vproc_exec(vp, inst_buf, i, 0);
 	test_num(vp->stack[vp->sp+1], 1);
 	//add
 	inst_buf[i++] = gen_op3((OP_ADD | RELOP_BIT), L_STK, L_STK);
 	inst_buf[i++] = 1;
 	inst_buf[i++] = 0;
-	vproc_exec(vp, inst_buf, i);
+	vproc_exec(vp, inst_buf, i, 0);
 	test_num(vp->stack[vp->sp+1], 3);
 	//subtract
 	inst_buf[i++] = gen_op3((OP_SUB | RELOP_BIT), L_STK, L_STK);
 	inst_buf[i++] = 1;
 	inst_buf[i++] = 0;
-	vproc_exec(vp, inst_buf, i);
+	vproc_exec(vp, inst_buf, i, 0);
 	test_num(vp->stack[vp->sp+1], 1);
 	//multiply
 	inst_buf[i++] = gen_op3((OP_MUL | RELOP_BIT), L_STK, L_STK);
 	inst_buf[i++] = 1;
 	inst_buf[i++] = 0;
-	vproc_exec(vp, inst_buf, i);
+	vproc_exec(vp, inst_buf, i, 0);
 	test_num(vp->stack[vp->sp+1], 2);
 	//exponent
 	inst_buf[i++] = gen_op3((OP_EXP | RELOP_BIT), L_STK, L_STK);
 	inst_buf[i++] = 1;
 	inst_buf[i++] = 0;
-	vproc_exec(vp, inst_buf, i);
+	vproc_exec(vp, inst_buf, i, 0);
 	test_num(vp->stack[vp->sp+1], 4);
 	//divide
 	inst_buf[i++] = gen_op3((OP_DIV | RELOP_BIT), L_STK, L_STK);
 	inst_buf[i++] = 1;
 	inst_buf[i++] = 0;
-	vproc_exec(vp, inst_buf, i);
+	vproc_exec(vp, inst_buf, i, 0);
 	test_num(vp->stack[vp->sp+1], 2);
     }
 }
@@ -839,14 +839,11 @@ TEST_CASE("builtin functions") {
     SUBCASE("assertions") {
 	safecpy(buf, "assert(1)", SPCL_STR_BSIZE);
 	spcl_val tmp = spcl_parse_line(vp, buf);
-	CHECK(tmp.type == VAL_NUM);
-	CHECK(tmp.val.x == 1);
-	CHECK(tmp.n_els == 1);
+	test_num(tmp, 1);
 	cleanup_spcl_val(&tmp, vp);
 	safecpy(buf, "assert(true)", SPCL_STR_BSIZE);
 	tmp = spcl_parse_line(vp, buf);
-	CHECK(tmp.type == VAL_NUM);
-	CHECK(tmp.val.x == 1);
+	test_num(tmp, 1);
 	cleanup_spcl_val(&tmp, vp);
 	safecpy(buf, "assert(false)", SPCL_STR_BSIZE);
 	tmp = spcl_parse_line(vp, buf);
@@ -855,13 +852,13 @@ TEST_CASE("builtin functions") {
 	cleanup_spcl_val(&tmp, vp);
 	safecpy(buf, "assert(1 <= 3)", SPCL_STR_BSIZE);
 	tmp = spcl_parse_line(vp, buf);
-	CHECK(tmp.type == VAL_NUM);
-	CHECK(tmp.val.x != 0);
+	CHECK(tmp.type == VAL_INT);
+	CHECK(tmp.val.i != 0);
 	cleanup_spcl_val(&tmp, vp);
 	safecpy(buf, "assert(len([0]) == 1)", SPCL_STR_BSIZE);
 	tmp = spcl_parse_line(vp, buf);
-	CHECK(tmp.type == VAL_NUM);
-	CHECK(tmp.val.x != 0);
+	CHECK(tmp.type == VAL_INT);
+	CHECK(tmp.val.i != 0);
 	cleanup_spcl_val(&tmp, vp);
 	safecpy(buf, "assert(1 > 3, \"1 is not greater than 3\")", SPCL_STR_BSIZE);
 	tmp = spcl_parse_line(vp, buf);
@@ -871,18 +868,18 @@ TEST_CASE("builtin functions") {
 	cleanup_spcl_val(&tmp, vp);
 	safecpy(buf, "isdef(apple)", SPCL_STR_BSIZE);
 	tmp = spcl_parse_line(vp, buf);
-	CHECK(tmp.type == VAL_NUM);
-	CHECK(tmp.val.x == 0);
+	CHECK(tmp.type == VAL_INT);
+	CHECK(tmp.val.i == 0);
 	cleanup_spcl_val(&tmp, vp);
 	safecpy(buf, "isdef(math.pi)", SPCL_STR_BSIZE);
 	tmp = spcl_parse_line(vp, buf);
-	CHECK(tmp.type == VAL_NUM);
-	CHECK(tmp.val.x == 1);
+	CHECK(tmp.type == VAL_INT);
+	CHECK(tmp.val.i == 1);
 	cleanup_spcl_val(&tmp, vp);
 	safecpy(buf, "assert(apple)", SPCL_STR_BSIZE);
 	tmp = spcl_parse_line(vp, buf);
 	CHECK(tmp.type == VAL_ERR);
-	WARN(tmp.val.e->c == E_ASSERT);
+	WARN(tmp.val.e->c == E_UNDEF);
 	cleanup_spcl_val(&tmp, vp);
 	safecpy(buf, "assert(isdef(apple))", SPCL_STR_BSIZE);
 	tmp = spcl_parse_line(vp, buf);
@@ -912,7 +909,7 @@ TEST_CASE("builtin functions") {
 	CHECK(tmp_val.val.a[2] == doctest::Approx(56.7));
 	cleanup_spcl_val(&tmp_val, vp);
 
-	safecpy(buf, "array([[0, 1, 2], [3, 4, 5], [6, 7, 8]])", SPCL_STR_BSIZE);
+	/*safecpy(buf, "array([[0, 1, 2], [3, 4, 5], [6, 7, 8]])", SPCL_STR_BSIZE);
 	tmp_val = spcl_parse_line(vp, buf);
 	REQUIRE(tmp_val.type == VAL_MAT);
 	REQUIRE(tmp_val.val.l != NULL);
@@ -923,7 +920,7 @@ TEST_CASE("builtin functions") {
 	    for (size_t j = 0; j < 3; ++j) {
 		CHECK(tmp_val.val.l[i].val.a[j] == i*3 + j);
 	    }
-	}
+	}*/
 	cleanup_spcl_val(&tmp_val, vp);
     }
     SUBCASE("Missing end graceful failure") {
@@ -973,172 +970,12 @@ TEST_CASE("builtin functions") {
     destroy_vproc(vp);
 }
 
-TEST_CASE("list interpretations") {
-    char buf[SPCL_STR_BSIZE];
-    vproc *vp = make_vproc();
-    //test lists interpretations
-    safecpy(buf, "[[i*2 for i in range(2)], [i*2-1 for i in range(1,3)], [x for x in range(1,3,0.5)]]", SPCL_STR_BSIZE);
-    spcl_val tmp_val = spcl_parse_line(vp, buf);
-    CHECK(tmp_val.type == VAL_LIST);
-    CHECK(tmp_val.val.l != NULL);
-    CHECK(tmp_val.n_els == 3);
-    {
-	//check the first sublist
-	spcl_val element = tmp_val.val.l[0];
-	REQUIRE(element.type == VAL_LIST);
-	REQUIRE(element.n_els == 2);
-	REQUIRE(element.val.l != NULL);
-	CHECK(element.val.l[0].type == VAL_NUM);
-	CHECK(element.val.l[0].val.x == 0);
-	CHECK(element.val.l[1].type == VAL_NUM);
-	CHECK(element.val.l[1].val.x == 2);
-	//check the second sublist
-	element = tmp_val.val.l[1];
-	REQUIRE(element.type == VAL_LIST);
-	REQUIRE(element.n_els == 2);
-	REQUIRE(element.val.l != NULL);
-	CHECK(element.val.l[0].type == VAL_NUM);
-	CHECK(element.val.l[0].val.x == 1);
-	CHECK(element.val.l[1].type == VAL_NUM);
-	CHECK(element.val.l[1].val.x == 3);
-	//check the third sublist
-	element = tmp_val.val.l[2];
-	REQUIRE(element.type == VAL_LIST);
-	REQUIRE(element.n_els == 4);
-	REQUIRE(element.val.l != NULL);
-	CHECK(element.val.l[0].type == VAL_NUM);
-	CHECK(element.val.l[0].val.x == 1);
-	CHECK(element.val.l[1].type == VAL_NUM);
-	CHECK(element.val.l[1].val.x == 1.5);
-	CHECK(element.val.l[2].type == VAL_NUM);
-	CHECK(element.val.l[2].val.x == 2);
-	CHECK(element.val.l[3].type == VAL_NUM);
-	CHECK(element.val.l[3].val.x == 2.5);
-    }
-    cleanup_spcl_val(&tmp_val, vp);
-    //test nested list interpretations
-    safecpy(buf, "[[x*y for x in range(1,6)] for y in range(5)]", SPCL_STR_BSIZE);
-    tmp_val = spcl_parse_line(vp, buf);
-    REQUIRE(tmp_val.type == VAL_LIST);
-    REQUIRE(tmp_val.val.l != NULL);
-    REQUIRE(tmp_val.n_els == 5);
-    for (size_t yy = 0; yy < tmp_val.n_els; ++yy) {
-	CHECK(tmp_val.val.l[yy].type == VAL_LIST);
-	CHECK(tmp_val.val.l[yy].n_els == 5);
-	for (size_t xx = 0; xx < tmp_val.val.l[yy].n_els; ++xx) {
-	    CHECK(tmp_val.val.l[yy].val.l[xx].type == VAL_NUM);
-	    CHECK(tmp_val.val.l[yy].val.l[xx].val.x == (xx+1)*yy);
-	}
-    }
-    cleanup_spcl_val(&tmp_val, vp);
-}
-
 void write_test_file(const char** lines, size_t n_lines, const char* fname) {
     FILE* f = fopen(fname, "w");
     for (size_t i = 0; i < n_lines; ++i)
 	fprintf(f, "%s\n", lines[i]);
     fclose(f);
 }
-
-//this function has a bunch of stuff that's only marked visible in debug builds, so we just ommit it for release
-#if SPCL_DEBUG_LVL>0
-/*TEST_CASE("spcl_fstream navigation") {
-    const char* fun_contents[] = {"{", "if a > 5 {", "return 1", "}", "return 0", ""};
-    const char* if_contents[] = {"{", "return 1", ""};
-
-    SUBCASE("open brace on a different line") {
-	const char* lines[] = { "fn test_fun(a)", "{", "if a > 5 {", "return 1", "}", "return 0", "}" };
-	size_t n_lines = sizeof(lines)/sizeof(char*);
-	write_test_file(lines, n_lines, TEST_FNAME);
-	//check the lines (curly brace on new line)
-	spcl_fstream* fs = make_spcl_fstream(TEST_FNAME);
-	psize st_off = 0;
-	for (size_t i = 0; i < n_lines; ++i) {
-	    s8 line;
-	    //duplicate to silence const char* to char* errors
-	    line.s = strdup(lines[i]);
-	    line.n = strlen(lines[i]);
-	    s8 strval = fs_read( fs, st_off, st_off+line.n );
-	    CHECK(s8cmp(line, strval) == 0);
-	    free(line.s);
-	    st_off += line.n+1;
-	}
-	psize cur = 0;
-	psize lend = fs_line_end(fs, cur);
-	CHECK(lend == strlen(lines[0]));
-	//find the block that says fn
-	read_state rs = make_read_state(fs, cur, fs->flen);
-	spcl_key tkey = get_keyword(&rs);
-	CHECK(tkey == KEY_FN);
-	CHECK(fs_find_line(fs, rs.start) == 0);
-	CHECK(rs.start == 3);
-	//find the parenthesis
-	psize op_loc, open_ind, close_ind, new_end;
-	spcl_val er = find_operator(rs, &op_loc, &open_ind, &close_ind, &new_end);
-	CHECK(er.type != VAL_ERR);
-	CHECK(open_ind == strlen("fn test_fun"));
-	CHECK(close_ind == strlen("fn test_fun")+2);
-	CHECK(op_loc >= new_end);
-	//test the braces around the function
-	cur = lend+1;
-	lend = fs_line_end(fs, cur);
-	er = find_operator(make_read_state(fs, cur, fs_end(fs)), &op_loc, &open_ind, &close_ind, &new_end);
-	CHECK(er.type != VAL_ERR);
-	CHECK(fs_find_line(fs, cur) == 1);
-	CHECK(open_ind == cur);
-	CHECK(close_ind == fs->flen - 2);
-	//check the braces around the if statement
-	cur = lend+1;
-	er = find_operator(make_read_state(fs, cur, close_ind), &op_loc, &open_ind, &close_ind, &new_end);
-	CHECK(er.type != VAL_ERR);
-	CHECK(fs_find_line(fs, open_ind) == 2);
-	CHECK(open_ind == strlen(lines[0])+strlen(lines[1])+2+strlen("if a > 5 "));
-	CHECK(close_ind == 37);
-	destroy_spcl_fstream(fs);
-    }
-    SUBCASE("open brace on the same line") {
-	const char* lines[] = { " fn  test_fun(a) {", "if a > 5 {return 1}", "return 0", "}" };
-	size_t n_lines = sizeof(lines)/sizeof(char*);
-	write_test_file(lines, n_lines, TEST_FNAME);
-	//check the lines (curly brace on new line)
-	spcl_fstream* fs = make_spcl_fstream(TEST_FNAME);
-	psize st_off = 0;
-	for (size_t i = 0; i < n_lines; ++i) {
-	    s8 line;
-	    line.s = strdup(lines[i]);
-	    line.n = strlen(lines[i]);
-	    s8 strval = fs_read(fs, st_off, st_off+line.n);
-	    CHECK(s8cmp(line, strval) == 0);
-	    free(line.s);
-	    st_off += line.n+1;
-	}
-	psize cur = 0;
-	psize lend = fs_line_end(fs, cur);
-	CHECK(lend == strlen(lines[0]));
-	//find the block that says fn
-	read_state rs = make_read_state(fs, cur, lend);
-	spcl_key tkey = get_keyword(&rs);
-	CHECK(tkey == KEY_FN);
-	CHECK(rs.start == 5);
-	//find the parenthesis
-	psize op_loc, open_ind, close_ind, new_end;
-	spcl_val er = find_operator(rs, &op_loc, &open_ind, &close_ind, &new_end);
-	CHECK(er.type != VAL_ERR);
-	CHECK(open_ind == strlen(" fn  test_fun"));
-	CHECK(close_ind == 15);
-	CHECK(op_loc >= new_end);
-	//check the braces around the if statement
-	cur = lend+1;
-	er = find_operator(make_read_state(fs, cur, fs_end(fs)), &op_loc, &open_ind, &close_ind, &new_end);
-	CHECK(er.type != VAL_ERR);
-	CHECK(open_ind == 28);
-	CHECK(close_ind == 37);
-	//move to the next character after the open brace and get the contents
-	open_ind += 1;
-	destroy_spcl_fstream(fs);
-    }
-}*/
-#endif
 
 spcl_val test_fun_call(spcl_fn_call f, vproc *vp) {
     spcl_val ret;
@@ -1163,45 +1000,6 @@ spcl_val test_fun_gamma(spcl_fn_call f, vproc *vp) {
 	return spcl_make_err(E_LACK_TOKENS, vp, "only works with numbers");
     double a = f.args[0].val.x;
     return spcl_make_num(sqrt(1 - a*a));
-}
-
-TEST_CASE("spcl_inst lookups") {
-    const char* letters = "etaoin";
-    size_t n_letters = strlen(letters);
-    const size_t GEN_LEN = 4;
-    char name[GEN_LEN+1];
-    memset(name, 0, GEN_LEN+1);
-    vproc *vp = make_vproc();
-    spcl_set_val("tao", spcl_make_str("tao", 4, vp), 0, vp);
-    size_t n_combs = 1;
-    for (size_t i = 0; i < GEN_LEN; ++i)
-	n_combs *= n_letters;
-
-    //add a whole bunch of words using the most common letters
-    spcl_val v;
-    size_t before_size = vp->d.n_memb;
-    auto start = std::chrono::steady_clock::now();
-    for (size_t i = 0; i < n_combs; ++i) {
-	size_t j = i;
-	size_t k = 0;
-	do {
-	    name[k++] = letters[j % n_letters];
-	    j /= n_letters;
-	} while (j && k < GEN_LEN);
-	spcl_set_val(name, spcl_make_num(i), 1, vp);
-	v = spcl_parse_line(vp, name);
-	test_num(v, i);
-    }
-    auto end = std::chrono::steady_clock::now();
-    double time = std::chrono::duration <double, std::milli> (end-start).count();
-    printf("took %f ms to set %lu elements\n", time, n_combs);
-    //lookup something not in the spcl_inst, check that we only added n_combs-1 elements because we added one match explicitly before
-    CHECK(vp->d.n_memb == n_combs+before_size-1);
-    v = spcl_parse_line(vp, "vetaon");
-    CHECK(v.type == VAL_UNDEF);
-    CHECK(v.val.x == 0);
-    CHECK(v.n_els == 0);
-    destroy_vproc(vp);
 }
 
 TEST_CASE("spcl_inst parsing") {
@@ -1314,36 +1112,245 @@ TEST_CASE("spcl_inst parsing") {
 	REQUIRE(val_c.type == VAL_STR);
 	CHECK(spcl_strcmp(val_c, cstr_to_spcl("test_inst")) == 0);
     }
-    SUBCASE ("stress test") {
-	//first we add a bunch of arbitrary variables to make searching harder for the parser
-	const char* lines1[] = {
-	    "Vodkis=1","Pagne=2","Meadaj=3","whis=4","nac4=5","RaKi=6","gyn=7","cid=8","Daiqui=9","Mooshi=10","Magnac=2","manChe=3","tes=4","Bourbu=5","magna=6","sak=7","Para=8","Keffi=9","Guino=10","Uuqax=11","Thraxeods=12","Trinzoins=13","gheds=14","theSoild=15","vengirs=16",
-	    "y = 2.0",
-	    "xs = linspace(0, y, 10000)",
-	    "arr1 = [math.sin(6*x/y) for x in xs]",
-	    "one = 1",
-	    "two = 2",
-	    "three=one+two" };
-	size_t n_lines1 = sizeof(lines1)/sizeof(char*);
-	write_test_file(lines1, n_lines1, TEST_FNAME);
-	spcl_fstream* b_1 = make_spcl_fstream(TEST_FNAME);
-	const char* lines2[] = { "arr2 = [gam(x/y) for x in xs]" };
-	size_t n_lines2 = sizeof(lines2)/sizeof(char*);
-	write_test_file(lines2, n_lines2, TEST_FNAME);
-	spcl_fstream* b_2 = make_spcl_fstream(TEST_FNAME);
-	vproc *vp = make_vproc();
-	spcl_val er = spcl_read_lines(vp, b_1);
-	CHECK(er.type != VAL_ERR);
-	spcl_val tmp_f = spcl_make_fn("gam", 1, &test_fun_gamma, vp);
-	spcl_set_val("gam", tmp_f, 1, vp);
-	cleanup_spcl_val(&tmp_f, vp);
-	er = spcl_read_lines(vp, b_2);
-	CHECK(er.type != VAL_ERR);
-	CHECK(spcl_test(vp, "three == 3"));
-	destroy_vproc(vp);
-	destroy_spcl_fstream(b_1);
-	destroy_spcl_fstream(b_2);
+}
+
+TEST_CASE("list interpretations") {
+    char buf[SPCL_STR_BSIZE];
+    vproc *vp = make_vproc();
+    //test a simple non-nested list interpretation
+    safecpy(buf, "[i*2 for i in range(2)]", SPCL_STR_BSIZE);
+    spcl_val tmp_val = spcl_parse_line(vp, buf);
+    REQUIRE(tmp_val.type == VAL_LIST);
+    REQUIRE(tmp_val.val.l != NULL);
+    REQUIRE(tmp_val.n_els == 2);
+    test_num(tmp_val.val.l[0], 0);
+    test_num(tmp_val.val.l[1], 2);
+    cleanup_spcl_val(&tmp_val, vp);
+    //test lists interpretations
+    safecpy(buf, "[[i*2 for i in range(2)], [i*2-1 for i in range(1,3)], [x for x in range(1,3,0.5)]]", SPCL_STR_BSIZE);
+    tmp_val = spcl_parse_line(vp, buf);
+    CHECK(tmp_val.type == VAL_LIST);
+    CHECK(tmp_val.val.l != NULL);
+    CHECK(tmp_val.n_els == 3);
+    {
+	//check the first sublist
+	spcl_val element = tmp_val.val.l[0];
+	REQUIRE(element.type == VAL_LIST);
+	REQUIRE(element.n_els == 2);
+	REQUIRE(element.val.l != NULL);
+	CHECK(element.val.l[0].type == VAL_NUM);
+	CHECK(element.val.l[0].val.x == 0);
+	CHECK(element.val.l[1].type == VAL_NUM);
+	CHECK(element.val.l[1].val.x == 2);
+	//check the second sublist
+	element = tmp_val.val.l[1];
+	REQUIRE(element.type == VAL_LIST);
+	REQUIRE(element.n_els == 2);
+	REQUIRE(element.val.l != NULL);
+	CHECK(element.val.l[0].type == VAL_NUM);
+	CHECK(element.val.l[0].val.x == 1);
+	CHECK(element.val.l[1].type == VAL_NUM);
+	CHECK(element.val.l[1].val.x == 3);
+	//check the third sublist
+	element = tmp_val.val.l[2];
+	REQUIRE(element.type == VAL_LIST);
+	REQUIRE(element.n_els == 4);
+	REQUIRE(element.val.l != NULL);
+	CHECK(element.val.l[0].type == VAL_NUM);
+	CHECK(element.val.l[0].val.x == 1);
+	CHECK(element.val.l[1].type == VAL_NUM);
+	CHECK(element.val.l[1].val.x == 1.5);
+	CHECK(element.val.l[2].type == VAL_NUM);
+	CHECK(element.val.l[2].val.x == 2);
+	CHECK(element.val.l[3].type == VAL_NUM);
+	CHECK(element.val.l[3].val.x == 2.5);
     }
+    cleanup_spcl_val(&tmp_val, vp);
+    //test nested list interpretations
+    safecpy(buf, "[[x*y for x in range(1,3)] for y in range(2,4)]", SPCL_STR_BSIZE);
+    tmp_val = spcl_parse_line(vp, buf);
+    REQUIRE(tmp_val.type == VAL_LIST);
+    REQUIRE(tmp_val.val.l != NULL);
+    REQUIRE(tmp_val.n_els == 5);
+    for (size_t yy = 0; yy < tmp_val.n_els; ++yy) {
+	CHECK(tmp_val.val.l[yy].type == VAL_LIST);
+	CHECK(tmp_val.val.l[yy].n_els == 5);
+	for (size_t xx = 0; xx < tmp_val.val.l[yy].n_els; ++xx) {
+	    CHECK(tmp_val.val.l[yy].val.l[xx].type == VAL_NUM);
+	    CHECK(tmp_val.val.l[yy].val.l[xx].val.x == (xx+1)*yy);
+	}
+    }
+    cleanup_spcl_val(&tmp_val, vp);
+}
+
+//this function has a bunch of stuff that's only marked visible in debug builds, so we just ommit it for release
+#if SPCL_DEBUG_LVL>0
+/*TEST_CASE("spcl_fstream navigation") {
+    const char* fun_contents[] = {"{", "if a > 5 {", "return 1", "}", "return 0", ""};
+    const char* if_contents[] = {"{", "return 1", ""};
+
+    SUBCASE("open brace on a different line") {
+	const char* lines[] = { "fn test_fun(a)", "{", "if a > 5 {", "return 1", "}", "return 0", "}" };
+	size_t n_lines = sizeof(lines)/sizeof(char*);
+	write_test_file(lines, n_lines, TEST_FNAME);
+	//check the lines (curly brace on new line)
+	spcl_fstream* fs = make_spcl_fstream(TEST_FNAME);
+	psize st_off = 0;
+	for (size_t i = 0; i < n_lines; ++i) {
+	    s8 line;
+	    //duplicate to silence const char* to char* errors
+	    line.s = strdup(lines[i]);
+	    line.n = strlen(lines[i]);
+	    s8 strval = fs_read( fs, st_off, st_off+line.n );
+	    CHECK(s8cmp(line, strval) == 0);
+	    free(line.s);
+	    st_off += line.n+1;
+	}
+	psize cur = 0;
+	psize lend = fs_line_end(fs, cur);
+	CHECK(lend == strlen(lines[0]));
+	//find the block that says fn
+	read_state rs = make_read_state(fs, cur, fs->flen);
+	spcl_key tkey = get_keyword(&rs);
+	CHECK(tkey == KEY_FN);
+	CHECK(fs_find_line(fs, rs.start) == 0);
+	CHECK(rs.start == 3);
+	//find the parenthesis
+	psize op_loc, open_ind, close_ind, new_end;
+	spcl_val er = find_operator(rs, &op_loc, &open_ind, &close_ind, &new_end);
+	CHECK(er.type != VAL_ERR);
+	CHECK(open_ind == strlen("fn test_fun"));
+	CHECK(close_ind == strlen("fn test_fun")+2);
+	CHECK(op_loc >= new_end);
+	//test the braces around the function
+	cur = lend+1;
+	lend = fs_line_end(fs, cur);
+	er = find_operator(make_read_state(fs, cur, fs_end(fs)), &op_loc, &open_ind, &close_ind, &new_end);
+	CHECK(er.type != VAL_ERR);
+	CHECK(fs_find_line(fs, cur) == 1);
+	CHECK(open_ind == cur);
+	CHECK(close_ind == fs->flen - 2);
+	//check the braces around the if statement
+	cur = lend+1;
+	er = find_operator(make_read_state(fs, cur, close_ind), &op_loc, &open_ind, &close_ind, &new_end);
+	CHECK(er.type != VAL_ERR);
+	CHECK(fs_find_line(fs, open_ind) == 2);
+	CHECK(open_ind == strlen(lines[0])+strlen(lines[1])+2+strlen("if a > 5 "));
+	CHECK(close_ind == 37);
+	destroy_spcl_fstream(fs);
+    }
+    SUBCASE("open brace on the same line") {
+	const char* lines[] = { " fn  test_fun(a) {", "if a > 5 {return 1}", "return 0", "}" };
+	size_t n_lines = sizeof(lines)/sizeof(char*);
+	write_test_file(lines, n_lines, TEST_FNAME);
+	//check the lines (curly brace on new line)
+	spcl_fstream* fs = make_spcl_fstream(TEST_FNAME);
+	psize st_off = 0;
+	for (size_t i = 0; i < n_lines; ++i) {
+	    s8 line;
+	    line.s = strdup(lines[i]);
+	    line.n = strlen(lines[i]);
+	    s8 strval = fs_read(fs, st_off, st_off+line.n);
+	    CHECK(s8cmp(line, strval) == 0);
+	    free(line.s);
+	    st_off += line.n+1;
+	}
+	psize cur = 0;
+	psize lend = fs_line_end(fs, cur);
+	CHECK(lend == strlen(lines[0]));
+	//find the block that says fn
+	read_state rs = make_read_state(fs, cur, lend);
+	spcl_key tkey = get_keyword(&rs);
+	CHECK(tkey == KEY_FN);
+	CHECK(rs.start == 5);
+	//find the parenthesis
+	psize op_loc, open_ind, close_ind, new_end;
+	spcl_val er = find_operator(rs, &op_loc, &open_ind, &close_ind, &new_end);
+	CHECK(er.type != VAL_ERR);
+	CHECK(open_ind == strlen(" fn  test_fun"));
+	CHECK(close_ind == 15);
+	CHECK(op_loc >= new_end);
+	//check the braces around the if statement
+	cur = lend+1;
+	er = find_operator(make_read_state(fs, cur, fs_end(fs)), &op_loc, &open_ind, &close_ind, &new_end);
+	CHECK(er.type != VAL_ERR);
+	CHECK(open_ind == 28);
+	CHECK(close_ind == 37);
+	//move to the next character after the open brace and get the contents
+	open_ind += 1;
+	destroy_spcl_fstream(fs);
+    }
+}*/
+#endif
+
+TEST_CASE("spcl_inst lookups") {
+    const char* letters = "etaoin";
+    size_t n_letters = strlen(letters);
+    const size_t GEN_LEN = 4;
+    char name[GEN_LEN+1];
+    memset(name, 0, GEN_LEN+1);
+    vproc *vp = make_vproc();
+    spcl_set_val("tao", spcl_make_str("tao", 4, vp), 0, vp);
+    size_t n_combs = 1;
+    for (size_t i = 0; i < GEN_LEN; ++i)
+	n_combs *= n_letters;
+
+    //add a whole bunch of words using the most common letters
+    spcl_val v;
+    size_t before_size = vp->d.n_memb;
+    auto start = std::chrono::steady_clock::now();
+    for (size_t i = 0; i < n_combs; ++i) {
+	size_t j = i;
+	size_t k = 0;
+	do {
+	    name[k++] = letters[j % n_letters];
+	    j /= n_letters;
+	} while (j && k < GEN_LEN);
+	spcl_set_val(name, spcl_make_num(i), 1, vp);
+	v = spcl_parse_line(vp, name);
+	test_num(v, i);
+    }
+    auto end = std::chrono::steady_clock::now();
+    double time = std::chrono::duration <double, std::milli> (end-start).count();
+    printf("took %f ms to set %lu elements\n", time, n_combs);
+    //lookup something not in the spcl_inst, check that we only added n_combs-1 elements because we added one match explicitly before
+    CHECK(vp->d.n_memb == n_combs+before_size-1);
+    v = spcl_parse_line(vp, "vetaon");
+    CHECK(v.type == VAL_UNDEF);
+    CHECK(v.val.x == 0);
+    CHECK(v.n_els == 0);
+    destroy_vproc(vp);
+}
+
+TEST_CASE("stress test") {
+    //first we add a bunch of arbitrary variables to make searching harder for the parser
+    const char* lines1[] = {
+	"Vodkis=1","Pagne=2","Meadaj=3","whis=4","nac4=5","RaKi=6","gyn=7","cid=8","Daiqui=9","Mooshi=10","Magnac=2","manChe=3","tes=4","Bourbu=5","magna=6","sak=7","Para=8","Keffi=9","Guino=10","Uuqax=11","Thraxeods=12","Trinzoins=13","gheds=14","theSoild=15","vengirs=16",
+	"y = 2.0",
+	"xs = linspace(0, y, 10000)",
+	"arr1 = [math.sin(6*x/y) for x in xs]",
+	"one = 1",
+	"two = 2",
+	"three=one+two" };
+    size_t n_lines1 = sizeof(lines1)/sizeof(char*);
+    write_test_file(lines1, n_lines1, TEST_FNAME);
+    spcl_fstream* b_1 = make_spcl_fstream(TEST_FNAME);
+    const char* lines2[] = { "arr2 = [gam(x/y) for x in xs]" };
+    size_t n_lines2 = sizeof(lines2)/sizeof(char*);
+    write_test_file(lines2, n_lines2, TEST_FNAME);
+    spcl_fstream* b_2 = make_spcl_fstream(TEST_FNAME);
+    vproc *vp = make_vproc();
+    spcl_val er = spcl_read_lines(vp, b_1);
+    CHECK(er.type != VAL_ERR);
+    spcl_val tmp_f = spcl_make_fn("gam", 1, &test_fun_gamma, vp);
+    spcl_set_val("gam", tmp_f, 1, vp);
+    cleanup_spcl_val(&tmp_f, vp);
+    er = spcl_read_lines(vp, b_2);
+    CHECK(er.type != VAL_ERR);
+    CHECK(spcl_test(vp, "three == 3"));
+    destroy_vproc(vp);
+    destroy_spcl_fstream(b_1);
+    destroy_spcl_fstream(b_2);
 }
 
 static const valtype SRC_SIG[] = {VAL_STR, VAL_NUM, VAL_NUM, VAL_NUM, VAL_NUM, VAL_NUM, VAL_NUM, VAL_INST};

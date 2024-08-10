@@ -190,7 +190,7 @@ void spcl_set_valn(vproc *vp, s8 name, spcl_val new_val, int copy);
 /**
  * execute the instructions at insts[n_insts]
  */
-spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts);
+spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts, usize pc);
 /**
  * Helper function which converts an instruction to a pointer to a spcl_val. This function does not perform any allocations, it simply looks up.
  * inst_loc: either L_LIT, L_REG, L_STK, or L_HEP to indicate which sector to look in

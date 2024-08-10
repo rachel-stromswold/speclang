@@ -10,10 +10,16 @@ static const char* const valnames[N_VALTYPES] = {"none", "error", "numeric", "st
 //aliases for optree operations
 static const s8 OP_ALIAS[]  = {s8(""), s8("+"), s8("-"), s8("*"), s8("/"), s8("%"), s8("**"), s8("|"), s8("&"), s8("<<"), s8(">>"), s8("=="), s8("!="), s8(">"), s8("<"), s8(">="), s8("<="), s8("!"), s8("||"), s8("&&"), s8("++"), s8("--"), s8("in"), s8("is"), s8("?"), s8("("), s8("{"), s8("="), s8("("), s8(","), s8("["), s8("["), s8("if"), s8("for"), s8("while"), s8("."), s8("?"), s8(":")};
 static const int OP_PRECS[] = {0, 5, 5, 4, 4, 4, 3, 9, 9, 9, 9, 8, 8, 8, 8, 8, 8, 9, 9, 9, 5, 5, 10, 11, 2, 2, 2, 13, 10, 9, 2, 2, 11, 11, 11, 1, 3, 2};
-static const int OP_LENS[] = {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 2, 3, 3, 2, 2, 2, 2, 4, 2, 3, 3, 3, 2, 3, 2, 3, 2, 3, 3, 2, 2, 2, 1, 3, 3, 3, 3, 3, 3, 1, 1, 4, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
+static const int OP_LENS[] = {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 2, 3, 3, 2, 2, 2, 2, 4, 2, 3, 3, 3, 2, 3, 3, 2, 3, 2, 1, 3, 3, 2, 2, 2, 1, 3, 3, 3, 3, 3, 3, 1, 1, 4, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
 
-#define spcl_isfalse(v) (v.type == VAL_UNDEF || (v.type == VAL_INT && v.val.i == 0) || v.n_els == 0)
-#define spcl_istrue(v) (!spcl_isfalse(v))
+//#define spcl_isfalse(v) (v.type == VAL_UNDEF || (v.type == VAL_INT && v.val.i == 0) || v.n_els == 0)
+//#define spcl_istrue(v) (!spcl_isfalse(v))
+static inline int spcl_isfalse(spcl_val v) {
+    return (v.type == VAL_UNDEF || (v.type == VAL_INT && v.val.i == 0) || v.n_els == 0);
+}
+static inline int spcl_istrue(spcl_val v) {
+    return (v.type != VAL_UNDEF && (v.type != VAL_INT || v.val.i != 0) && v.n_els);
+}
 
 //dumb forward declarations
 psize fs_end(const spcl_fstream* fs) {
@@ -237,6 +243,7 @@ static inline optr_op name_to_op(spcl_fstream *fs, psize pos) {
     case '(': return OPTR_CALL;//)
     case '[': return OPTR_LSTRD;//]
     case 'f': return (fs_get(fs,pos+1)=='o' && fs_get(fs,pos+2)=='r' && is_whitespace(fs_get(fs,pos+3)))? OPTR_FOR : 0;
+    case 'i': return (fs_get(fs,pos+1)=='n' && is_whitespace(fs_get(fs,pos+2)))? OPTR_IN : 0;
     default: break;
     }
     return 0;
@@ -1979,12 +1986,6 @@ spcl_local spcl_key get_keyword_str(s8 str) {
 //#define SM_IN_OP	13	//inside a variable name or keyword
 typedef enum {SM_EXIT, SM_EX_LSTART, SM_EX_LEND, SM_EX_NTUP, SM_EX_RVAL, SM_EX_BPAR, SM_EX_BCRL, SM_IN_PAR, SM_IN_BLK, SM_IN_LST, SM_IN_STR, SM_IN_NUM, SM_IN_NAME, N_SM_STATES} sm_state;
 
-typedef struct {
-    usize *insts;	//the instructions written (allocated on the arena a)
-    usize n_written;	//the number of instructions written
-    psize line_end;	//the end of the line read by tokenize
-} line_tokens;
-
 static inline optree_nd *optree_insert_op(optree_nd *nd, optr_op curop, arena *a) {
     optree_nd *tmp = make_nd(nd, 0, a);
     memcpy(tmp, nd, sizeof(optree_nd));
@@ -2014,7 +2015,7 @@ static inline optree_nd *parse_op(read_state *rs, optr_op curop, optree_nd *nd, 
     while (nd->parent) {
 	int vind = nd->parent->v.val.i;
 	//"YOU SHALL NOT PASS!" -Gandalf regarding parenthetical instructions calls or lists
-	if ((nd->parent->flags & ND_ISOP) && ((vind >= OPTR_CALL && vind != OPTR_DREF) || oprec < OP_PRECS[vind]))
+	if (ndflag(nd->parent, ND_ISOP) && ((vind >= OPTR_CALL && vind != OPTR_DREF) || oprec < OP_PRECS[vind]))
 	    break;
 	nd = nd->parent;
     }
@@ -2392,6 +2393,38 @@ static inline unfold_res const_prop(unfold_res def, vproc *vp, optree_nd *nd) {
     return def;
 }
 /**
+ * This helper writes and executes instructions to tidy the stack, such that only the return value pushed by in is on top of the stack
+ */
+static inline unfold_res _tidy_stack(unfold_res in, vproc *vp, usize *insts, usize n_insts) {
+    psize n_before = in.n_written;
+    //we have to manipulate the stack such that the value returned from tr is at the top of the stack and no other values were pushed
+    if (in.l == L_STK) {
+	debug_assert(in.v.st >= 0);
+	if (in.v.st >= in.n_pushed) {
+	    //if the value is higher on the stack, then we need to push a duplicate 
+	    if (in.n_pushed > 0)
+		insts[in.n_written++] = set_meta(gen_op1(OP_POPN), in.n_pushed);
+	    insts[in.n_written++] = gen_op2(OP_PUSH, L_STK);
+	    insts[in.n_written++] = in.v.st - in.n_pushed;
+	} else if (in.n_pushed > 1) {
+	    //if other values were pushed, we need to make sure this value is the highest so we can pop everything below
+	    if (in.n_pushed-1 != in.v.st) {
+		insts[in.n_written++] = gen_op3(OP_MOV, L_STK, L_STK);
+		insts[in.n_written++] = in.n_pushed-1;
+		insts[in.n_written++] = in.v.st;
+	    }
+	    insts[in.n_written++] = set_meta(gen_op1(OP_POPN), in.n_pushed-1);
+	}
+    } else {
+	if (in.n_pushed > 0)
+	    insts[in.n_written++] = set_meta(gen_op1(OP_POPN), in.n_pushed);
+	insts[in.n_written++] = gen_op2(OP_PUSH, in.l);
+	insts[in.n_written++] = (in.l == L_LIT)? in.v.st : (usize)in.v.hp;
+    }
+    vproc_exec(vp, insts, in.n_written, n_before);
+    return in;
+}
+/**
  * This helper function unfolds a comma separated tuple into a series of values. The values are stored on the top of the stack and the length of the tuple is return.n_pushed
  * vp: the process to push values onto
  * nd: the node to unfold. This should be an OPTR_APPND or the end of the tuple
@@ -2408,7 +2441,7 @@ static inline unfold_res _tup_unfold(vproc *vp, optree_nd *nd, usize *insts, usi
     optree_nd *tmp = nd;
     while (tmp) {
 	//if its a comma, unfold the appended value. Otherwise unfold the value itself
-	optree_nd *to_unfold = ((tmp->flags & ND_ISOP) && tmp->v.val.i == OPTR_APPND)? tmp->l : tmp;
+	optree_nd *to_unfold = (ndflag(tmp, ND_ISOP) && tmp->v.val.i == OPTR_APPND)? tmp->l : tmp;
 	//exit on an empty node
 	if (to_unfold->flags == 0) {
 	    if (tmp != nd) {
@@ -2418,31 +2451,33 @@ static inline unfold_res _tup_unfold(vproc *vp, optree_nd *nd, usize *insts, usi
 	    }
 	    break;
 	}
-	unfold_res tr = unfold_optree(vp, to_unfold, insts, n_insts, er);
+	unfold_res tr = unfold_optree(vp, to_unfold, insts+ret.n_written, n_insts-ret.n_written, er);
 	if (tr.type == VAL_ERR) {
 	    ret.type = VAL_ERR;
 	    return ret;
 	}
-	if ((to_unfold->flags & ND_ISCNST) == 0)
+	if (ndflag(to_unfold, ND_ISCNST) == 0)
 	    allcnst = 0;
+	tr = _tidy_stack(tr, vp, insts+ret.n_written, n_insts-ret.n_written);
 	ret.n_written += tr.n_written;
-	n_before = ret.n_written;
+	/*n_before = ret.n_written;
 	//we have to manipulate the stack such that the value returned from tr is at the top of the stack and no other values were pushed
 	if (tr.l == L_STK) {
 	    debug_assert(tr.v.st >= 0);
-	    if (tr.v.st+1 < tr.n_pushed) {
-		//if other values were pushed, we need to make sure this value is the highest so we can pop everything below
-		insts[ret.n_written++] = gen_op3(OP_MOV, L_STK, L_STK);
-		insts[ret.n_written++] = tr.n_pushed-1;
-		insts[ret.n_written++] = tr.l;
-		if (tr.n_pushed > 1)
-		    insts[ret.n_written++] = set_meta(gen_op1(OP_POPN), tr.n_pushed-1);
-	    } else if (tr.v.st > tr.n_pushed) {
+	    if (tr.v.st > tr.n_pushed) {
 		//if the value is higher on the stack, then we need to push a duplicate 
 		if (tr.n_pushed > 0)
 		    insts[ret.n_written++] = set_meta(gen_op1(OP_POPN), tr.n_pushed);
 		insts[ret.n_written++] = gen_op2(OP_PUSH, L_STK);
-		insts[ret.n_written++] = tr.v.st;
+		insts[ret.n_written++] = tr.v.st-tr.n_pushed;
+	    } else if (tr.n_pushed > 1) {
+		//if other values were pushed, we need to make sure this value is the highest so we can pop everything below
+		if (tr.n_pushed-1 != tr.v.st) {
+		    insts[ret.n_written++] = gen_op3(OP_MOV, L_STK, L_STK);
+		    insts[ret.n_written++] = tr.n_pushed-1;
+		    insts[ret.n_written++] = tr.v.st;
+		}
+		insts[ret.n_written++] = set_meta(gen_op1(OP_POPN), tr.n_pushed-1);
 	    }
 	} else {
 	    if (tr.n_pushed > 0)
@@ -2451,9 +2486,9 @@ static inline unfold_res _tup_unfold(vproc *vp, optree_nd *nd, usize *insts, usi
 	    insts[ret.n_written++] = (tr.l == L_LIT)? tr.v.st : (usize)tr.v.hp;
 	}
 	//execute all instructions
-	vproc_exec(vp, insts+n_before, ret.n_written-n_before);
+	vproc_exec(vp, insts, ret.n_written, n_before);*/
 	//check whether all the arguments were constants (in which case we can propogate)
-	if (tmp->flags & ND_ISLF || ((tmp->flags & ND_ISOP) && (tmp->v.val.i != OPTR_APPND || !(tmp->l->flags & ND_ISCNST))))
+	if (ndflag(tmp, ND_ISLF) || (ndflag(tmp, ND_ISOP) && (tmp->v.val.i != OPTR_APPND || !ndflag(tmp->l, ND_ISCNST))))
 	    allcnst = 0;
 	++ret.n_pushed;
 	//if the unfolded operation matches the current operation, we've reached the end
@@ -2461,6 +2496,9 @@ static inline unfold_res _tup_unfold(vproc *vp, optree_nd *nd, usize *insts, usi
 	    break;
 	tmp = tmp->r;
     }
+    insts[ret.n_written++] = gen_op2(OP_PUSH, L_LIT);
+    insts[ret.n_written++] = ret.n_pushed++;
+    vproc_exec(vp, insts, ret.n_written, ret.n_written-2);
     if (allcnst)
 	nd->flags |= ND_ISCNST;
     return ret;
@@ -2478,19 +2516,147 @@ static inline unfold_res _list_def_unfold(vproc *vp, optree_nd *nd, usize *insts
 	ret.v.hp->type = VAL_LIST;
 	return ret;
     }
-    //otherwise walk along the tree to count the length of the array
+    //check for fancy-schmancy list comprehensions
+    if (ndflag(nd, ND_ISOP) && nd->l->v.val.i == OPTR_FOR) {
+	nd = nd->l;
+	if (!ndflag(nd, ND_ISOP) || nd->r->v.val.i != OPTR_IN) {
+	    *er = spcl_make_err(E_BAD_SYNTAX, vp, "expected operator 'in'");
+	    ret.type = VAL_ERR;
+	    return ret;
+	}
+	//TODO allow for tuples
+	if (!ndflag(nd->r->l, ND_ISLF)) {
+	    *er = spcl_make_err(E_BAD_SYNTAX, vp, "expected variable before operator 'in'");
+	    ret.type = VAL_ERR;
+	    return ret;
+	}
+	//unfold the right expression and make sure we have a fresh list to work with
+	//TODO: allow for iterables
+	int owns = 1;
+	unfold_res ir = unfold_optree(vp, nd->r->r, insts, n_insts, er);
+	spcl_val loopv = (ir.l == L_STK)? vp->stack[vp->sp+ir.v.st] : (ir.l == L_LIT)? spcl_make_int(ir.v.st) : *ir.v.hp;
+	if (ir.l == L_LIT || (loopv.type != VAL_LIST && loopv.type != VAL_ARRAY)) {
+	    *er = spcl_make_err(E_BAD_TYPE, vp, "can't iterate over type %s", valnames[loopv.type]);
+	    ret.type = VAL_ERR;
+	    return ret;
+	}
+	ret.n_written += ir.n_written;
+	psize n_before = ret.n_written;
+	if (ir.n_pushed > 1) {
+	    if (ir.l == L_STK && ir.v.st < ir.n_pushed-1) {
+		insts[ret.n_written++] = gen_op3(OP_SWAP, L_STK, L_STK);
+		insts[ret.n_written++] = ir.v.st;
+		insts[ret.n_written++] = ir.n_pushed-1;
+	    }
+	    insts[ret.n_written++] = set_meta(OP_POPN, ir.n_pushed-1);
+	}
+	//push the number of elements followed by an iterator integer. Then allocate storage
+	insts[ret.n_written++] = gen_op2(OP_NELS, ir.l);
+	insts[ret.n_written++] = (ir.l == L_STK || ir.l == L_LIT)? ir.v.st : (usize)ir.v.hp;
+	insts[ret.n_written++] = gen_op2(OP_PUSH, L_LIT);
+	insts[ret.n_written++] = 0;
+	insts[ret.n_written++] = set_meta(gen_op2(OP_ALLOC, L_STK), VAL_LIST);
+	insts[ret.n_written++] = 1;
+	vproc_exec(vp, insts, ret.n_written, n_before);
+	//for the start of the loop we need to read the array
+	psize loop_start = ret.n_written;
+	insts[ret.n_written++] = gen_op3(OP_REA, ir.l, L_STK);
+	insts[ret.n_written++] = (ir.l == L_STK)? ir.v.st+3 : (usize)ir.v.hp;
+	insts[ret.n_written++] = 1;
+	//if there are no elements in the current list, we still need to generate valid code by temporarily pushing a dummy
+	if (loopv.n_els)
+	    vproc_exec(vp, insts, ret.n_written, ret.n_written-3);
+	else
+	    vp->stack[--vp->sp] = spcl_make_int(1);
+	//now we need to look up the variable name. It immediately goes out of scope, so we can temporarily overwrite other names
+	s8 lname = (s8){nd->r->l->v.val.s, nd->r->l->v.n_els};
+	usize ti;
+	find_ind(&vp->d, lname, &ti);
+	_hash_item old_item = vp->d.table[ti];
+	vp->d.table[ti].name = lname;
+	vp->d.table[ti].ind = vp->sp;
+	//now write the expression
+	unfold_res tmp = unfold_optree(vp, nd->l, insts+ret.n_written, n_insts-ret.n_written, er);
+	tmp = _tidy_stack(tmp, vp, insts+ret.n_written, n_insts-ret.n_written);
+	ret.n_written += tmp.n_written;
+	n_before = ret.n_written;
+	//write the assign and loop instructions
+	insts[ret.n_written++] = gen_op3(OP_WEA, L_STK, L_STK);
+	insts[ret.n_written++] = 2;
+	insts[ret.n_written++] = 3;
+	insts[ret.n_written++] = set_meta(gen_op1(OP_POPN), 1);
+	insts[ret.n_written++] = gen_op2(OP_INC, L_STK);
+	insts[ret.n_written++] = 1;
+	insts[ret.n_written++] = gen_op3(OP_LT, L_STK, L_STK);
+	insts[ret.n_written++] = 1;
+	insts[ret.n_written++] = 2;
+	insts[ret.n_written++] = gen_op2(OP_JNZR, L_LIT);
+	insts[ret.n_written++] = loop_start;
+	//after the loop completes, pop the index and n_els. Then call STL
+	insts[ret.n_written++] = gen_op3(OP_SWAP, L_STK, L_STK);
+	insts[ret.n_written++] = 0;
+	insts[ret.n_written++] = ir.n_pushed+2;
+	insts[ret.n_written++] = set_meta(gen_op1(OP_POPN), ir.n_pushed+2);
+	vproc_exec(vp, insts, ret.n_written, n_before);
+	//finally we return the list we pushed
+	ret.type = VAL_LIST;
+	ret.l = L_STK;
+	ret.v.st = 0;
+	ret.n_pushed = 1;
+	vp->d.table[ti] = old_item;
+	return ret;
+
+	/*if (ir.l != L_STK || ir.v.st >= ir.n_pushed || loopv.type != VAL_LIST) {
+	    if (ir.l != L_STK || ir.v.st >= ir.n_pushed)
+		owns = 0;
+	    insts[ret.n_written++] = set_meta(gen_op2(OP_ALLOC, L_STK), VAL_LIST);
+	    insts[ret.n_written++] = 0;
+	    insts[ret.n_written++] = gen_op3(OP_SWAP, L_STK, L_STK);
+	    insts[ret.n_written++] = 0;
+	    insts[ret.n_written++] = 1;
+	    ret.l = L_STK;
+	    ret.v.st = 0;
+	}
+	//remove any garbage items that may have been pushed if we're iterating over a list that's currently empty. TODO: this is kind of a hack, it might not work if there are assignments in the expression?
+	for (size_t i = 0; loopv.n_els == 0 && i < tmp.n_pushed; ++i) {
+	    cleanup_spcl_val(vp->stack + (vp->sp++), vp);
+	}
+	n_before = ret.n_written;
+	//we have to move the expression to the top of the stack
+	if (tmp.l != L_STK || tmp.v.st > tmp.n_pushed) {
+	    insts[ret.n_written++] = gen_op2(OP_PUSH, tmp.l);
+	    insts[ret.n_written++] = (tmp.l == L_STK)? tmp.v.st - tmp.n_pushed : (tmp.l == L_LIT)? tmp.v.st : (usize)tmp.v.hp;
+	    ++tmp.n_pushed;
+	} else if (tmp.v.st > 0) {
+	    insts[ret.n_written++] = gen_op3(OP_MOV, L_STK, L_STK);
+	    insts[ret.n_written++] = 0;
+	    insts[ret.n_written++] = tmp.v.st;
+	}
+	//finally we can pop everything and reset the old item
+	insts[ret.n_written++] = set_meta(gen_op1(OP_POPN), 2);
+	vproc_exec(vp, insts, ret.n_written, n_before);
+	vp->d.table[ti] = old_item;
+	//convert the return value if necessary
+	if (owns && loopv.type != VAL_LIST) {
+	    insts[ret.n_written++] = gen_op2(OP_FREE, ir.l);
+	    insts[ret.n_written++] = (ir.l == L_STK)? ir.v.st+1 : (usize)ret.v.hp;
+	}
+	return ret;*/
+    }
+    //otherwise use the standard tuple unfolding. Afterwords, we use our builtin expression to convert the stack to a list
     ret = _tup_unfold(vp, nd->l, insts, n_insts, er);
-    insts[ret.n_written++] = set_meta(gen_op1(OP_STL), ret.n_pushed);
-    vproc_exec(vp, insts+ret.n_written-1, 1);
-    if (nd->l->flags & ND_ISCNST) {
+    insts[ret.n_written++] = gen_op1(OP_STL);
+    vproc_exec(vp, insts, ret.n_written, ret.n_written-1);
+    ret.l = L_STK;
+    ret.v.st = 0;
+    ret.n_pushed = 1;
+    if (ndflag(nd->l, ND_ISCNST)) {
 	nd->flags = ND_ISCNST;
 	nd->v = vp->stack[vp->sp++];
 	return unfold_const(nd, vp);
     }
-    ret.l = L_STK;
-    ret.v.st = 0;
     return ret;
-    //check for fancy-schmancy list comprehensions
+
     /*if (tmp && (tmp->flags & ND_ISOP) && tmp->v.val.i == OPTR_FOR) {
 	if ((tmp->r->flags & ND_ISOP) == 0 || tmp->r->v.val.i != OP_IN) {
 	    *er = spcl_make_err(E_BAD_SYNTAX, "expected keyword 'in' for list comprehension");
@@ -2581,6 +2747,29 @@ static inline unfold_res _call_unfold(vproc *vp, optree_nd *nd, usize *insts, us
 	ret.type = VAL_ERR;
 	return ret;
     }*/
+    //TODO: implement using try catch
+    //isdef is a special function since it must be valid for undefined values
+    psize isdefn = strlen("isdef");
+    if (ndflag(nd->l, ND_ISLF) && nd->l->v.n_els == isdefn && memcmp(nd->l->v.val.s, "isdef", isdefn) == 0) {
+	unfold_optree(vp, nd->r, insts, n_insts, er);
+	ret.type = VAL_INT;
+	ret.l = L_LIT;
+	if (er->type == VAL_ERR) {
+	    if (er->val.e->c == E_UNDEF) {
+		cleanup_spcl_val(er, vp);
+		*er = (spcl_val){0};
+		ret.v.st = 0;
+		return ret;
+	    } else {
+		ret.type = VAL_ERR;
+		ret.l = L_HEP;
+		ret.v.hp = er;
+		return ret;
+	    }
+	}
+	ret.v.st = 1;
+	return ret;
+    }
     unfold_res fres = unfold_optree(vp, nd->l, insts, n_insts, er);
     if (fres.type != VAL_FN || fres.l == L_LIT) {
 	*er = spcl_make_err(E_BAD_TYPE, vp, "cannot call non-function %s", valnames[fres.type]);
@@ -2591,14 +2780,11 @@ static inline unfold_res _call_unfold(vproc *vp, optree_nd *nd, usize *insts, us
     spcl_val fval = (fres.l == L_STK)? vp->stack[fres.v.st+vp->sp] : *fres.v.hp;
     //unfold arguments
     unfold_res ares = _tup_unfold(vp, nd->r, insts+ret.n_written, n_insts-ret.n_written, er);
-    //lastly, we need to push the number of arguments and the call instruction
-    usize n_before = ret.n_written;
-    insts[ret.n_written++] = gen_op2(OP_PUSH, L_LIT);
-    insts[ret.n_written++] = ares.n_pushed;
-    insts[ret.n_written++] = gen_op2(OP_CALL, fres.l);
-    insts[ret.n_written++] = (fres.l == L_STK)? fres.v.st+ares.n_pushed+1 : (fres.l == L_LIT)? fres.v.st : (usize)fres.v.hp;
+    ret.n_written += ares.n_written;
     //execute the call, TODO: allow for tuple return
-    vproc_exec(vp, insts+n_before, ret.n_written-n_before);
+    insts[ret.n_written++] = gen_op2(OP_CALL, fres.l);
+    insts[ret.n_written++] = (fres.l == L_STK)? fres.v.st+ares.n_pushed : (fres.l == L_LIT)? fres.v.st : (usize)fres.v.hp;
+    vproc_exec(vp, insts, ret.n_written, ret.n_written-2);
     ret.l = L_STK;
     ret.v.st = 0;
     ret.n_pushed = 1;
@@ -2621,9 +2807,9 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	return (unfold_res){0};
     }
     unfold_res ret = (unfold_res){0};
-    if (nd->flags & ND_ISCNST) {
+    if (ndflag(nd, ND_ISCNST)) {
 	return unfold_const(nd, vp);
-    } else if (nd->flags & ND_ISLF) {
+    } else if (ndflag(nd, ND_ISLF)) {
 	ret.l = L_STK;
 	//TODO: this will break once we remove labels so it needs modification
 	psize i;
@@ -2644,7 +2830,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    ret.type = VAL_ERR;
 	    return ret;
 	}
-    } else if (nd->flags & ND_ISOP) {
+    } else if (ndflag(nd, ND_ISOP)) {
 	optree_nd *trn_parent = NULL;
 	unfold_res lr, rr;
 	//parentheses and list definitions are special cases
@@ -2659,7 +2845,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    return _list_def_unfold(vp, nd, insts, n_insts, er);
 	} else if (nd->v.val.i == OPTR_DREF) {
 	    //check that we're accessing a valid name
-	    if (!(nd->r->flags & ND_ISLF) || nd->r->v.type != VAL_STR) {
+	    if (!ndflag(nd->r, ND_ISLF) || nd->r->v.type != VAL_STR) {
 		*er = spcl_make_err(E_BAD_TYPE, vp, "invalid member name");
 		ret.type = VAL_ERR;
 		return ret;
@@ -2697,7 +2883,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 		ret.v.st = 0;
 		++ret.n_pushed;
 	    }
-	    vproc_exec(vp, insts, ret.n_written);
+	    vproc_exec(vp, insts, ret.n_written, 0);
 	    return const_prop(ret, vp, nd);
 	} else if (nd->v.val.i == OPTR_TRNQ) {
 	    //switch to the colon since we'll need to unfold both of those operators
@@ -2711,7 +2897,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	} else if (nd->v.val.i == OPTR_ASSGN) {
 	    //check that we're assigning to a valid name
 	    //TODO: allow for assignment to tuples
-	    if (nd->l->flags & ND_ISLF == 0) {
+	    if (ndflag(nd->l, ND_ISLF) == 0) {
 		*er = spcl_make_err(E_BAD_SYNTAX, vp, "invalid lvalue for assignment");
 		ret.type = VAL_ERR;
 		return ret;
@@ -2732,7 +2918,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 		    insts[ret.n_written++] = (ret.l == L_LIT)? ret.v.st : (usize)ret.v.hp;
 		    ret.v.st = 0;
 		}
-		vproc_exec(vp, insts, ret.n_written);
+		vproc_exec(vp, insts, ret.n_written, 0);
 		vp->d.table[ti].ind = ret.v.st + vp->sp;
 		++vp->d.n_memb;
 	    } else {
@@ -2740,7 +2926,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 		insts[ret.n_written++] = gen_op3(OP_MOV, L_STK, ret.l);
 		insts[ret.n_written++] = vp->d.table[ti].ind + vp->sp + ret.n_pushed;
 		insts[ret.n_written++] = (ret.l == L_STK) ? ret.v.st : (ret.l == L_LIT)? ret.v.st : (usize)ret.v.hp;
-		vproc_exec(vp, insts, ret.n_written);
+		vproc_exec(vp, insts, ret.n_written, 0);
 	    }
 	    return ret;
 	}
@@ -2773,7 +2959,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    insts[ret.n_written++] = (cr.l == L_STK)?cr.v.st:(cr.l == L_LIT)?cr.v.st:(usize)cr.v.hp;
 	    ret.v.st = 0;
 	    ++ret.n_pushed;
-	    vproc_exec(vp, insts+n_before, ret.n_written-n_before);
+	    vproc_exec(vp, insts+n_before, ret.n_written-n_before, 0);
 	    return const_prop(ret, vp, nd);
 	}
 	//if the result of l was pushed onto the stack then we can modify it inplace and return the result, otherwise use a generic operator that pushes onto the stack
@@ -2789,7 +2975,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	insts[ret.n_written++] = (lr.l == L_STK)? lr.v.st+rr.n_pushed : (lr.l == L_LIT)? lr.v.st : (usize)lr.v.hp;
 	insts[ret.n_written++] = (rr.l == L_STK)? rr.v.st : (rr.l == L_LIT)? rr.v.st : (usize)rr.v.hp;
 	//execute what we've written so far and propogate constants if possible
-	vproc_exec(vp, insts+n_before, ret.n_written-n_before);
+	vproc_exec(vp, insts+n_before, ret.n_written-n_before, 0);
 	return const_prop(ret, vp, nd);
 	/*if (ndflag(nd->l, ND_ISCNST) && ndflag(nd->r, ND_ISCNST) && nd->v.val.i <= OP_AND) {
 	    nd->flags = ND_ISCNST;
@@ -2819,10 +3005,12 @@ static inline spcl_val spcl_read_lines_block(vproc *vp, read_state rs) {
 	}
 	//execute it
 	unfold_optree(vp, nd, inst_buf, TMP_INST_SIZE, &tmp);
-	if (tmp.type == VAL_ERR)
+	if (tmp.type == VAL_ERR) {
 	    _print_error(stderr, tmp, old_rs);
 	    return tmp;
+	}
     }
+    return (spcl_val){0};
 }
 spcl_val spcl_parse_line(vproc *vp, const char* str) {
     //setup a read state from the string
@@ -3043,8 +3231,7 @@ static inline void _pshcpy(vproc *vp, spcl_val v) {
  * insts: an array with the code to execute 
  * n_insts: the length of insts
  */
-spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
-    usize pc = 0;
+spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts, usize pc) {
     s8 *name;
     spcl_val tmpd, tmps, tmpa;
     spcl_val *dst, *src, *arg;
@@ -3073,11 +3260,12 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
 	    pc += 3;
 	break;*/
 	case OP_STL:
-	    usize n_els = op_meta(insts[pc]);
-	    tmpd = spcl_make_list(NULL, n_els, vp);
-	    for (usize i = n_els; i > 0; --i) {
+	    tmpa = vp->stack[vp->sp++];
+	    if (tmpa.type != VAL_INT)
+		return spcl_make_err(E_BAD_TYPE, vp, "expected int number of elements found %s", valnames[tmpa.type]);
+	    tmpd = spcl_make_list(NULL, tmpa.val.i, vp);
+	    for (usize i = tmpa.val.i; i > 0; --i)
 		tmpd.val.l[i-1] = vp->stack[vp->sp++];
-	    }
 	    vp->stack[--vp->sp] = tmpd;
 	    pc += 1;
 	break;
@@ -3096,6 +3284,20 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
 	    vp->stack[--vp->sp] = spcl_uf_eval(dst->val.f, fc, vp);
 	    pc += 2;
 	break;
+	case OP_JNZR:
+	    if (!spcl_isfalse(vp->stack[vp->sp++])) {
+		pc = insts[pc+1];
+	    } else {
+		pc += 2;
+	    }
+	break;
+	case OP_JZR:
+	    if (spcl_isfalse(vp->stack[vp->sp++])) {
+		pc = insts[pc+1];
+	    } else {
+		pc += 2;
+	    }
+	break;
 	case OP_TRN:
 	    arg = _val_from_inst(vp, op_meta(insts[pc]), insts[pc+3], &tmpa);
 	    tmpa = *arg;
@@ -3104,6 +3306,10 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
 	    else
 		vp->stack[--vp->sp] = *dst;
 	    pc += 4;
+	break;
+	case OP_NELS:
+	    vp->stack[--vp->sp] = spcl_make_int(dst->n_els);
+	    pc += 2;
 	break;
 	case OP_ALLOC:
 	    if (dst->type != VAL_INT)
@@ -3117,6 +3323,15 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
 		vp->stack[--vp->sp] = spcl_make_str(NULL, dst->val.i, vp);
 	    }
 	    pc += 2;
+	break;
+	case OP_STRL:
+	    meta = op_meta(insts[pc]);
+	    if (meta > 1) {
+		tmpa = vp->stack[vp->sp];
+		memmove(vp->stack+vp->sp, vp->stack+vp->sp+1, sizeof(spcl_inst)*meta);
+		vp->stack[vp->sp+meta-1] = tmpa;
+	    }
+	    pc += 1;
 	break;
 	case OP_REA:
 	    if (src->type != VAL_INT)
@@ -3153,7 +3368,7 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
 	break;
 	case OP_POPN:
 	    debug_assert(vp->sp + op_meta(insts[pc]) < getpagesize());
-	    vp->sp -= op_meta(insts[pc]);
+	    vp->sp += op_meta(insts[pc]);
 	    ++pc;
 	break;
 	case OP_MOV:
@@ -3165,12 +3380,17 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts) {
 	    pc += 3;
 	break;
 	case OP_SWAP:
-	    tmpd = *dst;
+	    tmpa = *dst;
 	    *dst = *src;
-	    *src = tmpd;
+	    *src = tmpa;
 	    pc += 3;
 	break;
-	
+	case OP_CONV:
+	    tmpd = spcl_cast(*dst, op_meta(insts[pc]), vp);
+	    cleanup_spcl_val(dst, vp);
+	    *dst = tmpd;
+	    pc += 2;
+	break;
 
 	case OP_ADD: vp->stack[--vp->sp] = copy_spcl_val(*dst,vp);val_add(vp->stack+vp->sp,*src,vp);pc += 3;break;
 	case OP_SUB: vp->stack[--vp->sp] = copy_spcl_val(*dst,vp);val_sub(vp->stack+vp->sp,*src,vp);pc += 3;break;
