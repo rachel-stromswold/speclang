@@ -1152,10 +1152,11 @@ spcl_val spcl_make_list(const spcl_val* vs, size_t n_vs, vproc *vp) {
     spcl_val v;
     v.type = VAL_LIST;
     v.n_els = n_vs;
-    v.val.l = xmalloc(sizeof(spcl_val)*v.n_els, vp);
+    v.val.l = (v.n_els)? xmalloc(sizeof(spcl_val)*v.n_els, vp) : NULL;
     if (!vs)
 	return v;
-    for (size_t i = 0; i < v.n_els; ++i) v.val.l[i] = copy_spcl_val(vs[i], vp);
+    for (size_t i = 0; i < v.n_els; ++i)
+	v.val.l[i] = copy_spcl_val(vs[i], vp);
     return v;
 }
 spcl_val spcl_make_fn(const char* name, psize n_ret, lib_call p_exec, vproc *vp) {
@@ -1902,6 +1903,7 @@ static inline void setup_builtins(vproc *vp) {
     spcl_add_inst_fn(math_c, spcl_fabs,	"abs", vp);
     spcl_set_val("math", tmp, 0, vp);
     tmp = spcl_make_inst("sys", vp);
+    spcl_set_inst_valn(tmp.val.c, s8("argv"), 	spcl_make_list(NULL, 0, vp), 0, vp);
     spcl_set_val("sys", tmp, 0, vp);
 }
 
@@ -2209,7 +2211,7 @@ spcl_local psize _tokenize(vproc *vp, read_state rs, optree_nd *nd, sm_state sta
 		return rs.start;
 	    c = fs_get(rs.b, rs.start);
 	    if (c == ';' || c == '\n')
-		return rs.start;
+		return rs.start+1;
 	    if (!is_whitespace(c))
 		break;
 	}
@@ -2327,7 +2329,7 @@ spcl_local psize _tokenize(vproc *vp, read_state rs, optree_nd *nd, sm_state sta
 		    default: *er = spcl_make_err(E_BAD_SYNTAX, vp, "unrecognized escape sequence \\%c", c);return rs.end;
 		}
 	    } else if (c == match) {
-		return skip_ws(rs.b, rs.start, rs.end, 1);
+		return rs.start+1;
 	    }
 	    aappend(&vp->a, c);
 	    ++nd->v.n_els;
@@ -2433,7 +2435,7 @@ static inline unfold_res _tidy_stack(unfold_res in, vproc *vp, usize *insts, usi
  * er: store an error code
  * returns an unfold result with instructions to push to the stack. If all nodes encountered could be constant unfolded, then return.nd->fags will have the ND_ISCNST bit set
  */
-static inline unfold_res _tup_unfold(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, spcl_val *er) {
+static inline unfold_res _tup_unfold(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, unfold_res *asgn, spcl_val *er) {
     unfold_res ret = (unfold_res){0};
     //now push each argument onto the stack
     int allcnst = 1;
@@ -2451,7 +2453,7 @@ static inline unfold_res _tup_unfold(vproc *vp, optree_nd *nd, usize *insts, usi
 	    }
 	    break;
 	}
-	unfold_res tr = unfold_optree(vp, to_unfold, insts+ret.n_written, n_insts-ret.n_written, er);
+	unfold_res tr = unfold_optree(vp, to_unfold, insts+ret.n_written, n_insts-ret.n_written, asgn, er);
 	if (tr.type == VAL_ERR) {
 	    ret.type = VAL_ERR;
 	    return ret;
@@ -2506,7 +2508,7 @@ static inline unfold_res _tup_unfold(vproc *vp, optree_nd *nd, usize *insts, usi
 /**
  * Helper which unfolds list definitions
  */
-static inline unfold_res _list_def_unfold(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, spcl_val *er) {
+static inline unfold_res _list_def_unfold(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, unfold_res *asgn, spcl_val *er) {
     unfold_res ret = (unfold_res){0};
     //check for empty lists
     if (!nd->l) {
@@ -2533,7 +2535,7 @@ static inline unfold_res _list_def_unfold(vproc *vp, optree_nd *nd, usize *insts
 	//unfold the right expression and make sure we have a fresh list to work with
 	//TODO: allow for iterables
 	int owns = 1;
-	unfold_res ir = unfold_optree(vp, nd->r->r, insts, n_insts, er);
+	unfold_res ir = unfold_optree(vp, nd->r->r, insts, n_insts, NULL, er);
 	spcl_val loopv = (ir.l == L_STK)? vp->stack[vp->sp+ir.v.st] : (ir.l == L_LIT)? spcl_make_int(ir.v.st) : *ir.v.hp;
 	if (ir.l == L_LIT || (loopv.type != VAL_LIST && loopv.type != VAL_ARRAY)) {
 	    *er = spcl_make_err(E_BAD_TYPE, vp, "can't iterate over type %s", valnames[loopv.type]);
@@ -2561,7 +2563,7 @@ static inline unfold_res _list_def_unfold(vproc *vp, optree_nd *nd, usize *insts
 	//for the start of the loop we need to read the array
 	psize loop_start = ret.n_written;
 	insts[ret.n_written++] = gen_op3(OP_REA, ir.l, L_STK);
-	insts[ret.n_written++] = (ir.l == L_STK)? ir.v.st+3 : (usize)ir.v.hp;
+	insts[ret.n_written++] = loc_inst(ir, 3);
 	insts[ret.n_written++] = 1;
 	//if there are no elements in the current list, we still need to generate valid code by temporarily pushing a dummy
 	if (loopv.n_els)
@@ -2576,7 +2578,7 @@ static inline unfold_res _list_def_unfold(vproc *vp, optree_nd *nd, usize *insts
 	vp->d.table[ti].name = lname;
 	vp->d.table[ti].ind = vp->sp;
 	//now write the expression
-	unfold_res tmp = unfold_optree(vp, nd->l, insts+ret.n_written, n_insts-ret.n_written, er);
+	unfold_res tmp = unfold_optree(vp, nd->l, insts+ret.n_written, n_insts-ret.n_written, NULL, er);
 	tmp = _tidy_stack(tmp, vp, insts+ret.n_written, n_insts-ret.n_written);
 	ret.n_written += tmp.n_written;
 	n_before = ret.n_written;
@@ -2644,7 +2646,7 @@ static inline unfold_res _list_def_unfold(vproc *vp, optree_nd *nd, usize *insts
 	return ret;*/
     }
     //otherwise use the standard tuple unfolding. Afterwords, we use our builtin expression to convert the stack to a list
-    ret = _tup_unfold(vp, nd->l, insts, n_insts, er);
+    ret = _tup_unfold(vp, nd->l, insts, n_insts, NULL, er);
     insts[ret.n_written++] = gen_op1(OP_STL);
     vproc_exec(vp, insts, ret.n_written, ret.n_written-1);
     ret.l = L_STK;
@@ -2740,7 +2742,7 @@ static inline unfold_res _list_def_unfold(vproc *vp, optree_nd *nd, usize *insts
 /**
  * Unfold a function call
  */
-static inline unfold_res _call_unfold(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, spcl_val *er) {
+static inline unfold_res _call_unfold(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, unfold_res *asgn, spcl_val *er) {
     unfold_res ret = (unfold_res){0};
     /*if (nd->l == NULL || ndflag(nd->l, ND_ISLF) == 0) {
 	*er = spcl_make_err(E_BAD_SYNTAX, vp, "expected function name before call");
@@ -2751,11 +2753,11 @@ static inline unfold_res _call_unfold(vproc *vp, optree_nd *nd, usize *insts, us
     //isdef is a special function since it must be valid for undefined values
     psize isdefn = strlen("isdef");
     if (ndflag(nd->l, ND_ISLF) && nd->l->v.n_els == isdefn && memcmp(nd->l->v.val.s, "isdef", isdefn) == 0) {
-	unfold_optree(vp, nd->r, insts, n_insts, er);
+	unfold_optree(vp, nd->r, insts, n_insts, NULL, er);
 	ret.type = VAL_INT;
 	ret.l = L_LIT;
 	if (er->type == VAL_ERR) {
-	    if (er->val.e->c == E_UNDEF) {
+	    if (er->val.e->c == E_UNDEF || er->val.e->c == E_NOTMEMB) {
 		cleanup_spcl_val(er, vp);
 		*er = (spcl_val){0};
 		ret.v.st = 0;
@@ -2770,7 +2772,7 @@ static inline unfold_res _call_unfold(vproc *vp, optree_nd *nd, usize *insts, us
 	ret.v.st = 1;
 	return ret;
     }
-    unfold_res fres = unfold_optree(vp, nd->l, insts, n_insts, er);
+    unfold_res fres = unfold_optree(vp, nd->l, insts, n_insts, NULL, er);
     if (fres.type != VAL_FN || fres.l == L_LIT) {
 	*er = spcl_make_err(E_BAD_TYPE, vp, "cannot call non-function %s", valnames[fres.type]);
 	ret.type = VAL_ERR;
@@ -2779,11 +2781,11 @@ static inline unfold_res _call_unfold(vproc *vp, optree_nd *nd, usize *insts, us
     ret.n_written += fres.n_written;
     spcl_val fval = (fres.l == L_STK)? vp->stack[fres.v.st+vp->sp] : *fres.v.hp;
     //unfold arguments
-    unfold_res ares = _tup_unfold(vp, nd->r, insts+ret.n_written, n_insts-ret.n_written, er);
+    unfold_res ares = _tup_unfold(vp, nd->r, insts+ret.n_written, n_insts-ret.n_written, NULL, er);
     ret.n_written += ares.n_written;
     //execute the call, TODO: allow for tuple return
     insts[ret.n_written++] = gen_op2(OP_CALL, fres.l);
-    insts[ret.n_written++] = (fres.l == L_STK)? fres.v.st+ares.n_pushed : (fres.l == L_LIT)? fres.v.st : (usize)fres.v.hp;
+    insts[ret.n_written++] = loc_inst(fres, ares.n_pushed);
     vproc_exec(vp, insts, ret.n_written, ret.n_written-2);
     ret.l = L_STK;
     ret.v.st = 0;
@@ -2797,11 +2799,12 @@ static inline unfold_res _call_unfold(vproc *vp, optree_nd *nd, usize *insts, us
  * nd: the optree to unfold
  * insts: a buffer to write instructions to
  * n_insts: the length of the buffer. If there were insufficient elements, then -1 is returned.
+ * asgn: if asgn.type is not VAL_UNDEF, then this branch is interpreted as an lvalue in an assignment and the value is assigned
  * st_frame: the stack index of the current frame. (i.e. in a function call, set this to the index of the argument number value)
  * dict: the dictionary to use for name lookups
  * returns: an integer value with the number of instructions written on success or an error
  */
-unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, spcl_val *er) {
+unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, unfold_res *asgn, spcl_val *er) {
     if (!nd) {
 	//*er = spcl_make_err(E_BAD_VALUE, vp, "not an operator");
 	return (unfold_res){0};
@@ -2816,6 +2819,32 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	s8 str = (s8){nd->v.val.s, nd->v.n_els};
 	/*if (find_ind(vp->c, str, &i))
 	    ret.v.hp = &(vp->c->table[i].v);*/
+	if (asgn) {
+	    ret = *asgn;
+	    if (!find_ind(&vp->d, str, &i)) {
+		//if there isn't already an element with that name we have to expand the table and add a member
+		if (grow_dict(&vp->d, vp))
+		    find_ind(&vp->d, str, &i);
+		vp->d.table[i].name = s8dup(str, vp);
+		//we have to unfold the right side and push it to the stack
+		if (ret.l != L_STK) {
+		    insts[ret.n_written++] = gen_op2(OP_PUSH, ret.l);
+		    insts[ret.n_written++] = loc_inst(ret, 0);
+		    vproc_exec(vp, insts, ret.n_written, ret.n_written-2);
+		    ++ret.n_pushed;
+		    ret.v.st = 0;
+		}
+		vp->d.table[i].ind = ret.v.st + vp->sp;
+		++vp->d.n_memb;
+	    } else {
+		//if there already is a stack address allocated, we need to move to the correct spot
+		insts[ret.n_written++] = gen_op3(OP_MOV, L_STK, ret.l);
+		insts[ret.n_written++] = vp->d.table[i].ind + vp->sp + ret.n_pushed;
+		insts[ret.n_written++] = loc_inst(ret, 0);
+		vproc_exec(vp, insts, ret.n_written, ret.n_written-3);
+	    }
+	    return ret;
+	}
 	if (find_ind(&vp->d, str, &i)) {
 	    i = vp->d.table[i].ind;
 	    if (i < vp->sp) {
@@ -2835,14 +2864,14 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	unfold_res lr, rr;
 	//parentheses and list definitions are special cases
 	if (nd->v.val.i == OPTR_PAREN) {
-	    ret = unfold_optree(vp, nd->l, insts, n_insts, er);
+	    ret = unfold_optree(vp, nd->l, insts, n_insts, asgn, er);
 	    if (ndflag(nd->l, ND_ISCNST))
 		*nd = *nd->l;
 	    return ret;
 	} else if (nd->v.val.i == OPTR_CALL) {
-	    return _call_unfold(vp, nd, insts, n_insts, er);
+	    return _call_unfold(vp, nd, insts, n_insts, asgn, er);
 	} else if (nd->v.val.i == OPTR_LSTDF) {
-	    return _list_def_unfold(vp, nd, insts, n_insts, er);
+	    return _list_def_unfold(vp, nd, insts, n_insts, asgn, er);
 	} else if (nd->v.val.i == OPTR_DREF) {
 	    //check that we're accessing a valid name
 	    if (!ndflag(nd->r, ND_ISLF) || nd->r->v.type != VAL_STR) {
@@ -2852,8 +2881,8 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    }
 	    s8 rname = (s8){nd->r->v.val.s, nd->r->v.n_els};
 	    //unfold the instance
-	    lr = unfold_optree(vp, nd->l, insts, n_insts, er);
-	    spcl_val tmpv = (lr.l == L_STK)? vp->stack[vp->sp+lr.v.st] : (lr.l == L_HEP)? *lr.v.hp : spcl_make_int(lr.v.st);
+	    ret = unfold_optree(vp, nd->l, insts, n_insts, NULL, er);
+	    spcl_val tmpv = (ret.l == L_STK)? vp->stack[vp->sp+ret.v.st] : (ret.l == L_HEP)? *ret.v.hp : spcl_make_int(ret.v.st);
 	    if (tmpv.type != VAL_INST) {
 		*er = spcl_make_err(E_BAD_TYPE, vp, "cannot access member %.*s from type %s", rname.n, rname.s, valnames[tmpv.type]);
 		ret.type = VAL_ERR;
@@ -2861,19 +2890,43 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    }
 	    usize ti;
 	    if (!find_ind(tmpv.val.c->cls, rname, &ti)) {
-		*er = spcl_make_err(E_UNDEF, vp, "unknown member %.*s", rname.n, rname.s);
+		*er = spcl_make_err(E_NOTMEMB, vp, "unknown member %.*s", rname.n, rname.s);
 		ret.type = VAL_ERR;
 		return ret;
 	    }
-	    ret.n_written = lr.n_written;
+	    ti = tmpv.val.c->cls->table[ti].ind;
+	    usize n_before = ret.n_written;
+	    if (asgn) {
+		//if it's an assignment we have to ensure that the rvalue is at the top of the stack before the WEA
+		if (ret.n_pushed > 0 || asgn->l != L_STK || asgn->v.st != 0) {
+		    lr = *asgn;
+		    insts[ret.n_written++] = gen_op2(OP_PUSH, lr.l);
+		    insts[ret.n_written++] = loc_inst(lr, ret.n_pushed);
+		}
+		insts[ret.n_written++] = gen_op3(OP_WEA, lr.l, L_LIT);
+		insts[ret.n_written++] = loc_inst(ret, 0);
+		insts[ret.n_written++] = ti;
+	    } else {
+		insts[ret.n_written++] = gen_op3(OP_REA, ret.l, L_LIT);
+		insts[ret.n_written++] = loc_inst(ret, 0);
+		insts[ret.n_written++] = ti;
+		ret.l = L_STK;
+		ret.type = tmpv.val.c->vals[ti].type;
+		ret.v.st = 0;
+		++ret.n_pushed;
+	    }
+	    vproc_exec(vp, insts, ret.n_written, n_before);
+	    //TODO: allow constant propagation
+	    return ret;
+	    /*ret.n_written = lr.n_written;
 	    ret.n_pushed = lr.n_pushed;
 	    ret.l = L_HEP;
 	    ret.v.hp = tmpv.val.c->vals + tmpv.val.c->cls->table[ti].ind;
 	    ret.type = ret.v.hp->type;
-	    return ret;
+	    return ret;*/
 	} else if (nd->v.val.i == OPTR_NOT) {
 	    //TODO: find a way to more elegantly merge this with other operators
-	    ret = unfold_optree(vp, nd->r, insts, n_insts, er);
+	    ret = unfold_optree(vp, nd->r, insts, n_insts, asgn, er);
 	    if (ret.l == L_STK && ret.v.st < ret.n_pushed) {
 		insts[ret.n_written++] = gen_op2((OP_NOT | RELOP_BIT), L_STK);
 		insts[ret.n_written++] = ret.v.st;
@@ -2896,16 +2949,25 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    }
 	} else if (nd->v.val.i == OPTR_ASSGN) {
 	    //check that we're assigning to a valid name
-	    //TODO: allow for assignment to tuples
-	    if (ndflag(nd->l, ND_ISLF) == 0) {
+	    /*if (ndflag(nd->l, ND_ISLF) == 0) {
 		*er = spcl_make_err(E_BAD_SYNTAX, vp, "invalid lvalue for assignment");
 		ret.type = VAL_ERR;
 		return ret;
 	    }
+	    s8 lname = (s8){nd->l->v.val.s, nd->l->v.n_els};*/
+	    
 	    //if its an assignment, then we need to perform that action before there is any complaint about missing values
-	    ret = unfold_optree(vp, nd->r, insts, n_insts, er);
-	    s8 lname = (s8){nd->l->v.val.s, nd->l->v.n_els};
-	    usize ti;
+	    rr = unfold_optree(vp, nd->r, insts, n_insts, NULL, er);
+	    if (er->type == VAL_ERR)
+		return rr;
+	    //TODO: allow for assignment to tuples
+	    ret = unfold_optree(vp, nd->l, insts, n_insts, &rr, er);
+	    return ret;
+	    //propagate errors other than undefined (which is fine since we can define during assignment
+	    if (er->type == VAL_ERR)
+		return ret;
+	    
+	    /*usize ti;
 	    //now we need to assign the value
 	    if (!find_ind(&vp->d, lname, &ti)) {
 		//if there isn't already an element with that name we have to expand the table and add a member
@@ -2927,14 +2989,13 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 		insts[ret.n_written++] = vp->d.table[ti].ind + vp->sp + ret.n_pushed;
 		insts[ret.n_written++] = (ret.l == L_STK) ? ret.v.st : (ret.l == L_LIT)? ret.v.st : (usize)ret.v.hp;
 		vproc_exec(vp, insts, ret.n_written, 0);
-	    }
-	    return ret;
+	    }*/
 	}
 	//otherwise, unfold both children and check for errors
-	lr = unfold_optree(vp, nd->l, insts, n_insts, er);
+	lr = unfold_optree(vp, nd->l, insts, n_insts, NULL, er);
 	if (er->type == VAL_ERR)
 	    return ret;
-	rr = unfold_optree(vp, nd->r, insts, n_insts-lr.n_written, er);
+	rr = unfold_optree(vp, nd->r, insts, n_insts-lr.n_written, NULL, er);
 	if (er->type == VAL_ERR)
 	    return ret;
 	
@@ -2945,7 +3006,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	psize n_before = ret.n_written;
 	//handle ternary operator conditions
 	if (trn_parent) {
-	    unfold_res cr = unfold_optree(vp, trn_parent->l, insts, n_insts-ret.n_written, er);
+	    unfold_res cr = unfold_optree(vp, trn_parent->l, insts, n_insts-ret.n_written, NULL, er);
 	    if (er->type == VAL_ERR)
 		return cr;
 	    //correct the return write and push numbers
@@ -2954,13 +3015,26 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    n_before += cr.n_written;
 	    //write the ternary expression
 	    insts[ret.n_written++] = set_meta(gen_op3(OP_TRN, lr.l, rr.l), cr.l);
-	    insts[ret.n_written++] = (lr.l == L_STK)?lr.v.st+rr.n_pushed+cr.n_pushed:(lr.l == L_LIT)?lr.v.st:(usize)lr.v.hp;
-	    insts[ret.n_written++] = (rr.l == L_STK)?rr.v.st+cr.n_pushed:(rr.l == L_LIT)?rr.v.st:(usize)rr.v.hp;
-	    insts[ret.n_written++] = (cr.l == L_STK)?cr.v.st:(cr.l == L_LIT)?cr.v.st:(usize)cr.v.hp;
+	    insts[ret.n_written++] = loc_inst(lr, rr.n_pushed + cr.n_pushed);
+	    insts[ret.n_written++] = loc_inst(rr, cr.n_pushed);
+	    insts[ret.n_written++] = loc_inst(cr, 0);
 	    ret.v.st = 0;
 	    ++ret.n_pushed;
 	    vproc_exec(vp, insts+n_before, ret.n_written-n_before, 0);
 	    return const_prop(ret, vp, nd);
+	}
+	if (nd->v.val.i == OPTR_LSTRD) {
+	    if (asgn) {
+		//if it's an assignment we have to ensure that the rvalue is at the top of the stack before the WEA
+		if (ret.n_pushed > 0 || asgn->l != L_STK || asgn->v.st != 0) {
+		    ret = *asgn;
+		    insts[ret.n_written++] = gen_op2(OP_PUSH, ret.l);
+		    insts[ret.n_written++] = loc_inst(ret, ret.n_pushed);
+		}
+		nd->v.val.i = OP_WEA;
+	    } else {
+		nd->v.val.i = OP_REA;
+	    }    
 	}
 	//if the result of l was pushed onto the stack then we can modify it inplace and return the result, otherwise use a generic operator that pushes onto the stack
 	if (lr.l == L_STK && lr.v.st < ret.n_pushed && nd->v.val.i <= OP_SHR) {
@@ -2972,8 +3046,8 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    ++ret.n_pushed;
 	}
 	//we have to correct the left stack address to account for pushes by the right
-	insts[ret.n_written++] = (lr.l == L_STK)? lr.v.st+rr.n_pushed : (lr.l == L_LIT)? lr.v.st : (usize)lr.v.hp;
-	insts[ret.n_written++] = (rr.l == L_STK)? rr.v.st : (rr.l == L_LIT)? rr.v.st : (usize)rr.v.hp;
+	insts[ret.n_written++] = loc_inst(lr, rr.n_pushed);
+	insts[ret.n_written++] = loc_inst(rr, 0);
 	//execute what we've written so far and propogate constants if possible
 	vproc_exec(vp, insts+n_before, ret.n_written-n_before, 0);
 	return const_prop(ret, vp, nd);
@@ -3004,7 +3078,7 @@ static inline spcl_val spcl_read_lines_block(vproc *vp, read_state rs) {
 	    return tmp;
 	}
 	//execute it
-	unfold_optree(vp, nd, inst_buf, TMP_INST_SIZE, &tmp);
+	unfold_optree(vp, nd, inst_buf, TMP_INST_SIZE, NULL, &tmp);
 	if (tmp.type == VAL_ERR) {
 	    _print_error(stderr, tmp, old_rs);
 	    return tmp;
@@ -3029,7 +3103,7 @@ spcl_val spcl_parse_line(vproc *vp, const char* str) {
     //unfold the tree
     psize sp_before = vp->sp;
     usize inst_buf[TMP_INST_SIZE];
-    unfold_res res = unfold_optree(vp, nd, inst_buf, TMP_INST_SIZE, &er);
+    unfold_res res = unfold_optree(vp, nd, inst_buf, TMP_INST_SIZE, NULL, &er);
     if (res.type == VAL_ERR || er.type == VAL_ERR)
 	return er;
     //find the return value
@@ -3340,6 +3414,8 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts, usize pc) {
 		vp->stack[--vp->sp] = dst->val.l[src->val.i];
 	    else if (dst->type == VAL_ARRAY)
 		vp->stack[--vp->sp] = spcl_make_num(dst->val.a[src->val.i]);
+	    else if (dst->type == VAL_INST)
+		vp->stack[--vp->sp] = dst->val.c->vals[src->val.i];
 	    pc += 3;
 	break;
 	case OP_WEA:
@@ -3348,8 +3424,10 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts, usize pc) {
 	    if (dst->type == VAL_LIST) {
 		dst->val.l[src->val.i] = vp->stack[vp->sp++];
 	    } else if (dst->type == VAL_ARRAY) {
-		tmps = vp->stack[vp->sp++];
-		dst->val.a[src->val.i] = tmps.val.x;
+		tmpa = vp->stack[vp->sp++];
+		dst->val.a[src->val.i] = tmpa.val.x;
+	    } else if (dst->type == VAL_INST) {
+		dst->val.c->vals[src->val.i] = vp->stack[vp->sp++];
 	    }
 	    pc += 3;
 	break;
@@ -3793,13 +3871,13 @@ vproc *spcl_read_file(const char* fname, int argc, const char** argv) {
     spcl_val ret = {0};
     //create a new spcl_inst
     vproc *vp = make_vproc();
-    //write the prefix to start a list
+    //write the prefix to start the argument list
     const char *prefix = "sys.argv=[";
-    char *argv_str = vp->a.head;
-    memcpy(vp->a.head, prefix, strlen(prefix));
-    vp->a.head += strlen(prefix);
-    //read each of the arguments
     if (argc > 0 && argv) {
+	char *argv_str = vp->a.head;
+	memcpy(vp->a.head, prefix, strlen(prefix));
+	vp->a.head += strlen(prefix);
+	//read each of the arguments
 	for (int i = 0; i < argc; ++i) {
 	    //store whether argv[i] is a flag like -r
 	    int is_flag = 0;
@@ -3826,28 +3904,29 @@ vproc *spcl_read_file(const char* fname, int argc, const char** argv) {
 		aappend(&vp->a, argv[i][k]);
 	    }
 	}
+	aappend(&vp->a, ']');
+	aappend(&vp->a, 0);
+	//now read the argv buffer and free memory
+	spcl_val er = spcl_parse_line(vp, argv_str);
+	if (er.type == VAL_ERR) {
+	    read_state rs;
+	    rs.start = 0;
+	    rs.end = (char*)vp->a.head - argv_str;
+	    rs.b = make_spcl_fstream_str(argv_str, rs.end);
+	    _print_error(stderr, er, rs);
+	    destroy_spcl_fstream(rs.b);
+	    destroy_vproc(vp);
+	    return NULL;
+	}
+	reset(&vp->a);
     }
-    aappend(&vp->a, ']');
-    //now read the argv buffer and free memory
-    spcl_val er = spcl_parse_line(vp, argv_str);
-    if (er.type == VAL_ERR) {
-	read_state rs;
-	rs.start = 0;
-	rs.end = (char*)vp->a.head - argv_str;
-	rs.b = make_spcl_fstream_str(argv_str, rs.end);
-	_print_error(stderr, er, rs);
-	destroy_spcl_fstream(rs.b);
-	destroy_vproc(vp);
-	return NULL;
-    }
-    reset(&vp->a);
 
     //read the rest of the file and check to ensure the file was opened successfully
     spcl_fstream* fs = make_spcl_fstream(fname);
     if (fs) {
-	er = spcl_read_lines(vp, fs);
+	spcl_val er = spcl_read_lines(vp, fs);
 	destroy_spcl_fstream(fs);
-	if (!er.type) {
+	if (er.type == VAL_ERR) {
 	    destroy_vproc(vp);
 	    return NULL;
 	}

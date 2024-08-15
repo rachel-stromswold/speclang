@@ -44,7 +44,7 @@ typedef struct spcl_val spcl_val;
 //constants
 typedef struct spcl_val (*lib_call)(struct spcl_fn_call, struct _vproc *vp);
 
-typedef enum { E_SUCCESS, E_NOFILE, E_LACK_TOKENS, E_BAD_SYNTAX, E_BAD_VALUE, E_BAD_TYPE, E_NOMEM, E_NAN, E_UNDEF, E_OUT_OF_RANGE, E_ASSERT, N_ERRORS } parse_ercode;
+typedef enum { E_SUCCESS, E_NOFILE, E_LACK_TOKENS, E_BAD_SYNTAX, E_BAD_VALUE, E_BAD_TYPE, E_NOMEM, E_NAN, E_UNDEF, E_NOTMEMB, E_OUT_OF_RANGE, E_ASSERT, N_ERRORS } parse_ercode;
 typedef enum {VAL_UNDEF, VAL_ERR, VAL_INT, VAL_NUM, VAL_STR, VAL_ARRAY, VAL_MAT, VAL_LIST, VAL_FN, VAL_INST, _VAL_STACKREF, _VAL_GLOBREF, N_VALTYPES} valtype;
 //helper classes and things
 typedef enum {BLK_UNDEF, BLK_MISC, BLK_INVERT, BLK_TRANSFORM, BLK_DATA, BLK_ROOT, BLK_COMPOSITE, BLK_FUNC_DEC, BLK_LITERAL, BLK_COMMENT, BLK_SQUARE, BLK_QUOTE, BLK_QUOTE_SING, BLK_PAREN, BLK_CURLY, N_BLK_TYPES} blk_type;

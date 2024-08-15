@@ -231,15 +231,15 @@ TEST_CASE("optree unfolding") {
     s8cpp s8_arr("lst = [1e-1, 2, 3]");
 
     optree_nd *nd = tokenize_str(vp, s8_seta.str.s, s8_seta.str.n);
-    unfold_res res = unfold_optree(vp, nd, inst_buf, INST_SIZE, &er);
+    unfold_res res = unfold_optree(vp, nd, inst_buf, INST_SIZE, NULL, &er);
     nd = tokenize_str(vp, s8_setb.str.s, s8_setb.str.n);
-    res = unfold_optree(vp, nd, inst_buf, INST_SIZE, &er);
+    res = unfold_optree(vp, nd, inst_buf, INST_SIZE, NULL, &er);
     nd = tokenize_str(vp, s8_setc.str.s, s8_setc.str.n);
-    res = unfold_optree(vp, nd, inst_buf, INST_SIZE, &er);
+    res = unfold_optree(vp, nd, inst_buf, INST_SIZE, NULL, &er);
     //reset(a);
 
     nd = tokenize_str(vp, s8_op_order.str.s, s8_op_order.str.n);
-    res = unfold_optree(vp, nd, inst_buf, INST_SIZE, &er);
+    res = unfold_optree(vp, nd, inst_buf, INST_SIZE, NULL, &er);
     CHECK(er.type != VAL_ERR);
     CHECK(op_code(inst_buf[0]) == OP_MUL);
     CHECK(op_dstl(inst_buf[0]) == L_STK);
@@ -258,7 +258,7 @@ TEST_CASE("optree unfolding") {
     //reset(a);
 
     nd = tokenize_str(vp, s8_paren.str.s, s8_paren.str.n);
-    res = unfold_optree(vp, nd, inst_buf, INST_SIZE, &er);
+    res = unfold_optree(vp, nd, inst_buf, INST_SIZE, NULL, &er);
     CHECK(er.type != VAL_ERR);
     CHECK(op_code(inst_buf[0]) == OP_ADD);
     CHECK(op_dstl(inst_buf[0]) == L_STK);
@@ -273,7 +273,7 @@ TEST_CASE("optree unfolding") {
     //reset(a);
 
     nd = tokenize_str(vp, s8_const_prop.str.s, s8_const_prop.str.n);
-    res = unfold_optree(vp, nd, inst_buf, INST_SIZE, &er);
+    res = unfold_optree(vp, nd, inst_buf, INST_SIZE, NULL, &er);
     CHECK(er.type != VAL_ERR);
     CHECK(op_code(inst_buf[0]) == OP_MUL);
     CHECK(op_dstl(inst_buf[0]) == L_HEP);
@@ -286,7 +286,7 @@ TEST_CASE("optree unfolding") {
     //reset(a);
 
     nd = tokenize_str(vp, s8_arr.str.s, s8_arr.str.n);
-    res = unfold_optree(vp, nd, inst_buf, INST_SIZE, &er);
+    res = unfold_optree(vp, nd, inst_buf, INST_SIZE, NULL, &er);
     CHECK(er.type != VAL_ERR);
     //check that the correct value was returned
     spcl_val stack_top = vp->stack[vp->sp+res.v.st];
@@ -1011,8 +1011,7 @@ TEST_CASE("spcl_inst parsing") {
 	REQUIRE(vp != NULL);
 	//lookup the named spcl_vals
 	spcl_val val_a = spcl_parse_line(vp, "a1");
-	CHECK(val_a.type == VAL_NUM);
-	CHECK(val_a.val.x == 1);
+	test_num(val_a, 1);
 	spcl_val val_c = spcl_parse_line(vp, "c");
 	CHECK(val_c.type == VAL_LIST);
 	CHECK(val_c.n_els == 2);
