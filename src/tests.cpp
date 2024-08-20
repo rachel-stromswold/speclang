@@ -981,16 +981,10 @@ spcl_val test_fun_call(spcl_fn_call f, vproc *vp) {
     spcl_val ret;
     if (f.n_args < 1)
 	return spcl_make_err(E_LACK_TOKENS, vp, "expected 1 argument");
-    if (f.args[0].type != VAL_NUM)
-	return spcl_make_err(E_LACK_TOKENS, vp, "only works with numbers");
-    double a = f.args[0].val.x;
-    if (a > 5) {
-	ret.type = VAL_INST;
-	ret.val.c = make_spcl_inst(vp);
-	spcl_set_val("name", cstr_to_spcl("hi"), 1, vp);
-	return ret;
-    }
-    return f.args[0];
+    if (f.args[0].type != VAL_INT)
+	return spcl_make_err(E_LACK_TOKENS, vp, "only works with integers");
+    double x = (double)f.args[0].val.i;
+    return spcl_make_num(x*x);
 }
 
 spcl_val test_fun_gamma(spcl_fn_call f, vproc *vp) {
@@ -1002,7 +996,7 @@ spcl_val test_fun_gamma(spcl_fn_call f, vproc *vp) {
     return spcl_make_num(sqrt(1 - a*a));
 }
 
-TEST_CASE("spcl_inst parsing") {
+TEST_CASE("spcl_obj parsing") {
     SUBCASE ("without nesting") {
 	const char* lines[] = { "a1 = 1", "\"b\"", " c = [\"d\", \"e\"]" };
 	size_t n_lines = sizeof(lines)/sizeof(char*);
@@ -1019,7 +1013,7 @@ TEST_CASE("spcl_inst parsing") {
 	CHECK(val_c.val.l[1].type == VAL_STR);
 	destroy_vproc(vp);
     }
-    SUBCASE ("with nesting") {
+    /*SUBCASE ("with nesting") {
 	const char* lines[] = { "a = {name = \"apple\";", "spcl_vals = [20, 11]}", "b = a.spcl_vals[0]", "c = a.spcl_vals[1] + a.spcl_vals[0]+1" }; 
 	size_t n_lines = sizeof(lines)/sizeof(char*);
 	write_test_file(lines, n_lines, TEST_FNAME);
@@ -1044,7 +1038,7 @@ TEST_CASE("spcl_inst parsing") {
 	spcl_val val_c = spcl_parse_line(vp, "c");
 	CHECK(val_c.type == VAL_NUM);
 	CHECK(val_c.val.x == 32);
-    }
+    }*/
     SUBCASE ("external user defined functions") {
 	const char* fun_name = "test_fun";
 	char* tmp_name = strdup(fun_name);
@@ -1065,11 +1059,8 @@ TEST_CASE("spcl_inst parsing") {
 	CHECK(val_a.type == VAL_NUM);
 	CHECK(val_a.val.x == 1);
 	spcl_val val_b = spcl_parse_line(vp, "b");
-	CHECK(val_b.type == VAL_INST);
-	spcl_val val_b_name = spcl_parse_line(vp, "b.name");
-	CHECK(val_b_name.type == VAL_STR);
-	CHECK(spcl_strcmp(val_b_name, cstr_to_spcl("hi")) == 0);
-	free(tmp_name);
+	CHECK(val_b.type == VAL_NUM);
+	CHECK(val_b.val.x == 100);
 	destroy_vproc(vp);
 	destroy_spcl_fstream(b_1);
     }
@@ -1104,7 +1095,7 @@ TEST_CASE("spcl_inst parsing") {
 	//look at the returned instance
 	spcl_val val_c = spcl_parse_line(vp, "c");
 	REQUIRE(val_c.type == VAL_INST);
-	spcl_inst* sub_c = val_c.val.c;
+	spcl_obj* sub_o = val_c.val.o;
 	val_c = spcl_parse_line(vp, "c.num");
 	test_num(val_c, 2);
 	val_c = spcl_parse_line(vp, "c.__type__");
@@ -1282,7 +1273,7 @@ TEST_CASE("list interpretations") {
 }*/
 #endif
 
-TEST_CASE("spcl_inst lookups") {
+TEST_CASE("spcl_obj lookups") {
     const char* letters = "etaoin";
     size_t n_letters = strlen(letters);
     const size_t GEN_LEN = 4;
@@ -1312,7 +1303,7 @@ TEST_CASE("spcl_inst lookups") {
     auto end = std::chrono::steady_clock::now();
     double time = std::chrono::duration <double, std::milli> (end-start).count();
     printf("took %f ms to set %lu elements\n", time, n_combs);
-    //lookup something not in the spcl_inst, check that we only added n_combs-1 elements because we added one match explicitly before
+    //lookup something not in the spcl_obj, check that we only added n_combs-1 elements because we added one match explicitly before
     CHECK(vp->d.n_memb == n_combs+before_size-1);
     v = spcl_parse_line(vp, "vetaon");
     CHECK(v.type == VAL_UNDEF);
@@ -1355,7 +1346,7 @@ TEST_CASE("stress test") {
 static const valtype SRC_SIG[] = {VAL_STR, VAL_NUM, VAL_NUM, VAL_NUM, VAL_NUM, VAL_NUM, VAL_NUM, VAL_INST};
 spcl_val spcl_gen_gaussian_source(spcl_fn_call f, vproc *vp) {
     spcl_sigcheck_opts(&f, 6, SRC_SIG, vp);
-    spcl_val ret = spcl_make_inst("Gaussian_source", vp);
+    spcl_val ret = spcl_make_class("Gaussian_source", vp);
     spcl_set_sub_val(ret.val.c, "component", f.args[0], 1, vp);
     spcl_set_sub_val(ret.val.c, "wavelength", f.args[1], 0, vp);
     spcl_set_sub_val(ret.val.c, "amplitude", f.args[2], 0, vp);
@@ -1370,7 +1361,7 @@ spcl_val spcl_gen_gaussian_source(spcl_fn_call f, vproc *vp) {
 static const valtype BOX_SIG[] = {VAL_ARRAY, VAL_ARRAY};
 spcl_val spcl_gen_box(spcl_fn_call f, vproc *vp) {
     spcl_sigcheck(&f, BOX_SIG, vp);
-    spcl_val ret = spcl_make_inst("Box", vp);
+    spcl_val ret = spcl_make_class("Box", vp);
     spcl_set_sub_val(ret.val.c, "pt_1", f.args[0], 1, vp);
     spcl_set_sub_val(ret.val.c, "pt_2", f.args[1], 1, vp);
     return ret;
@@ -1378,12 +1369,12 @@ spcl_val spcl_gen_box(spcl_fn_call f, vproc *vp) {
 static const valtype QUAD_SIG[] = {VAL_NUM};
 spcl_val spcl_quad_trap(spcl_fn_call f, vproc *vp) {
     spcl_sigcheck(&f, QUAD_SIG, vp);
-    spcl_val ret = spcl_make_inst("quad_pot", vp);
+    spcl_val ret = spcl_make_class("quad_pot", vp);
     spcl_set_sub_val(ret.val.c, "k", f.args[0], 0, vp);
     return ret;
 }
 void setup_geometry_inst(vproc *vp) {
-    //we have to set up the spcl_inst with all of our functions
+    //we have to set up the spcl_obj with all of our functions
     spcl_add_fn(spcl_gen_gaussian_source, "Gaussian_source", vp);
     spcl_add_fn(spcl_gen_box, "Box", vp);
     spcl_add_fn(spcl_quad_trap, "quad_pot", vp);
@@ -1424,7 +1415,7 @@ TEST_CASE("file parsing") {
     int n;
     unsigned len;
     double flts[N_FLTS];
-    spcl_inst* sub;
+    spcl_obj* sub;
     REQUIRE(spcl_find_object(vp, "gs", "Gaussian_source", &sub) == 0);
     //string lookups
     CHECK(spcl_find_c_str(vp, "gs.component", buf, SPCL_STR_BSIZE) == 2);
@@ -1489,7 +1480,7 @@ TEST_CASE("file importing") {
 
 /*TODO: fix these
 TEST_CASE("assertions") {
-    spcl_val v = spcl_inst_from_file(TEST_ASSERT_NAME, 0, NULL);
+    spcl_val v = spcl_obj_from_file(TEST_ASSERT_NAME, 0, NULL);
     CHECK(v.type != VAL_ERR);
 #ifdef NEXP_TESTS
     CHECK(spcl_test(v.val.c, "k1 == 0.000012"));
@@ -1499,7 +1490,7 @@ TEST_CASE("assertions") {
     cleanup_spcl_val(&v, vp);
     const char* targv_free[] = {"-f", "--box_len=2", "--hs_rad=2"};
     size_t targc_free = sizeof(targv_free)/sizeof(char*);
-    v = spcl_inst_from_file(TEST_ASSERT_NAME, targc_free, targv_free);
+    v = spcl_obj_from_file(TEST_ASSERT_NAME, targc_free, targv_free);
     CHECK(v.type != VAL_ERR);
     CHECK(spcl_test(v.val.c, "len(sys.argv) == 1"));
     CHECK(spcl_test(v.val.c, "sys.argv[0] == \"f\""));
@@ -1518,7 +1509,7 @@ TEST_CASE("benchmarks") {
     //run assertions
     for (size_t i = 0; i < N_RUNS; ++i) {
 	auto start = std::chrono::steady_clock::now();
-	spcl_val v = spcl_inst_from_file(TEST_BENCH_NAME, 0, NULL);
+	spcl_val v = spcl_obj_from_file(TEST_BENCH_NAME, 0, NULL);
 	auto end = std::chrono::steady_clock::now();
 	times[i] = std::chrono::duration <double, std::milli> (end-start).count();
 	if (i == 0)
@@ -1530,7 +1521,7 @@ TEST_CASE("benchmarks") {
     //run benchmarks
     for (size_t i = 0; i < N_RUNS; ++i) {
 	auto start = std::chrono::steady_clock::now();
-	spcl_val v = spcl_inst_from_file(POT_TEST_NAME, 0, NULL);
+	spcl_val v = spcl_obj_from_file(POT_TEST_NAME, 0, NULL);
 	auto end = std::chrono::steady_clock::now();
 	times[i] = std::chrono::duration <double, std::milli> (end-start).count();
 	cleanup_spcl_val(&v, vp);

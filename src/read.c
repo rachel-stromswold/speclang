@@ -265,16 +265,16 @@ int spcl_strcmp(spcl_val a, spcl_val b) {
 /**
  * get the psize of a spcl_context
  */
-static inline size_t con_size(spcl_dict *d) {
+static inline size_t con_size(_context *d) {
     if (!d)
 	return 0;
     return 1 << d->t_bits;
 }
 
 /**
- * iterate through a spcl_inst by finding defined entries in the table
+ * iterate through a _context by finding defined entries in the table
  */
-static inline usize con_it_next(spcl_dict *d, usize i) {
+static inline usize con_it_next(_context *d, usize i) {
     for (; i < con_size(d); ++i) {
 	if (d->table[i].name.s)
 	    return i;
@@ -285,24 +285,39 @@ static inline usize con_it_next(spcl_dict *d, usize i) {
 /**
  * Given an uninitialized dictionary d, initialize it to a sane default
  */
-static inline void init_spcl_dict(spcl_dict *d, vproc *vp) {
+static inline void init_context(_context *d, vproc *vp) {
     d->n_memb = 0;
+    d->n_statics = 0;
     d->t_bits = DEF_TAB_BITS;
     d->table = xmalloc(sizeof(_hash_item)*con_size(d), vp);
     memset(d->table, 0, sizeof(_hash_item)*con_size(d));
+    //by default, we assume that there are no static values and hence no memory is allocated
+    d->statics = NULL;
 }
-static inline void copy_spcl_dict(spcl_dict *d, spcl_dict *o, vproc *vp) {
+static inline void copy_context(_context *d, _context *o, vproc *vp) {
     d->n_memb = o->n_memb;
+    d->n_statics = 0;
     d->t_bits = o->t_bits;
     d->table = xmalloc(sizeof(_hash_item)*con_size(d), vp);
     for (usize i = 0; i < con_size(d); i = con_it_next(d, i+1)) {
 	d->table[i].name = s8dup(o->table[i].name, vp);
 	d->table[i].ind = o->table[i].ind;
     }
+    //copy static values if any are present
+    if (o->statics) {
+	d->statics = xmalloc(sizeof(spcl_val)*con_size(d), vp);
+	for (usize i = 0; d->statics && i < con_size(d); ++i)
+	    d->statics[i] = copy_spcl_val(o->statics[i], vp);
+    }
 }
-static inline void cleanup_spcl_dict(spcl_dict *d, vproc *vp) {
+static inline void cleanup_context(_context *d, vproc *vp) {
     for (usize i = con_it_next(d, 0); i < con_size(d); i = con_it_next(d, i+1))
 	xfree(d->table[i].name.s, vp);
+    if (d->statics) {
+	for (usize i = 0; i < con_size(d); ++i)
+	    cleanup_spcl_val(&d->statics[i], vp);
+	xfree(d->statics, vp);
+    }
     xfree(d->table, vp);
 }
 
@@ -425,7 +440,7 @@ static inline psize token_block(const spcl_fstream* fs, psize s, psize e, const 
 
 /** ============================ psize ============================ **/
 
-spcl_local read_state make_read_state(const spcl_fstream* fs, psize s, psize e) {
+spcl_local read_state make_read_state(spcl_fstream* fs, psize s, psize e) {
     read_state rs;
     rs.b = fs;
     rs.start = s;
@@ -689,7 +704,7 @@ spcl_val spcl_typeof(spcl_fn_call f, vproc *vp) {
 	return spcl_make_none();
     }
     sto.n_els = strlen(valnames[f.args[0].type])+1;
-    sto.val.s = valnames[f.args[0].type];
+    sto.val.s = strdup(valnames[f.args[0].type]);
     return sto;
 }
 spcl_val spcl_len(spcl_fn_call f, vproc *vp) {
@@ -812,7 +827,7 @@ spcl_val spcl_flatten(spcl_fn_call f, vproc *vp) {
 	    cur_list = tmp.v;
 	    cur_st = tmp.i;
 	}
-    } while (vp->a.head > st_start);
+    } while ((svi*)vp->a.head > st_start);
     //reset the arena
     vp->a.head = stk;
     ret.type = VAL_LIST;
@@ -1166,14 +1181,15 @@ spcl_val spcl_make_fn(const char* name, psize n_ret, lib_call p_exec, vproc *vp)
     ret.val.f = make_spcl_uf_ex(p_exec, vp);
     return ret;
 }
-spcl_val spcl_make_inst(const char *s, vproc *vp) {
+spcl_val spcl_make_class(const char *s, vproc *vp) {
     spcl_val v;
-    v.type = VAL_INST;
-    v.val.c = make_spcl_inst(vp);
-    if (s && s[0] != 0) {
+    v.type = VAL_CLASS;
+    v.val.c = xmalloc(sizeof(_context), vp);
+    init_context(v.val.c, vp);
+    /*if (s && s[0] != 0) {
 	spcl_val tmp = spcl_make_str(s, strlen(s), vp);
-	spcl_set_inst_valn(v.val.c, s8("__type__"), tmp, 0, vp);
-    }
+	spcl_set_static_valn(v.val.c, s8("__type__"), tmp, 0, vp);
+    }*/
     return v;
 }
 spcl_val copy_spcl_val(spcl_val o, vproc *vp) {
@@ -1207,7 +1223,10 @@ spcl_val copy_spcl_val(spcl_val o, vproc *vp) {
 	break;
 	//TODO: these can only be implemented after we get rid of copy_spcl_val
 	case VAL_INST:
-	    ret.val.c = copy_spcl_inst(o.val.c, vp);
+	    ret.val.o = copy_spcl_obj(o.val.o, vp);
+	break;
+	case VAL_CLASS:
+	    copy_context(ret.val.c, o.val.c, vp);
 	break;
 	case VAL_FN:
 	    ret.val.f = copy_spcl_uf(o.val.f, vp);
@@ -1356,10 +1375,10 @@ spcl_val spcl_cast(spcl_val v, valtype t, vproc *vp) {
 	    return ret;
 	} else if (v.type == VAL_INST) {
 	    //instance -> list
-	    ret.n_els = v.val.c->cls->n_memb;
+	    ret.n_els = v.val.o->cls->n_memb;
 	    ret.val.l = xmalloc(sizeof(spcl_val)*ret.n_els, vp);
 	    for (usize i = 0; i < ret.n_els; ++i)
-		ret.val.l[i] = copy_spcl_val(v.val.c->vals[i], vp);
+		ret.val.l[i] = copy_spcl_val(v.val.o->vals[i], vp);
 	    return ret;
 	} else if (v.type == VAL_MAT) {
 	    //matrices are basically just an alias for lists
@@ -1424,8 +1443,8 @@ void cleanup_spcl_val(spcl_val *v, vproc *vp) {
 	xfree(v->val.l, vp);
     } else if (v->type == VAL_ARRAY && v->val.a) {
 	xfree(v->val.a, vp);
-    } else if (v->type == VAL_INST && v->val.c) {
-	destroy_spcl_inst(v->val.c, vp);
+    } else if (v->type == VAL_INST && v->val.o) {
+	destroy_spcl_obj(v->val.o, vp);
     } else if (v->type == VAL_FN && v->val.f) {
 	destroy_spcl_uf(v->val.f, vp);
     }
@@ -1772,7 +1791,7 @@ spcl_local void val_exp(spcl_val* l, spcl_val r, vproc *vp) {
     }
 }
 
-/** ============================ spcl_inst ============================ **/
+/** ============================ _context ============================ **/
 
 //helper to convert possibly negative index spcl_vals to real C indices
 static inline size_t index_to_abs(spcl_val* ind, size_t max_n, vproc *vp) {
@@ -1813,7 +1832,7 @@ static inline usize fnv_1(s8 str) {
  * ind: the location where we find the matching index
  * returns: 1 if a match was found, 0 otherwise
  */
-static inline int find_ind(spcl_dict *d, s8 name, usize* ind) {
+static inline int find_ind(_context *d, s8 name, psize* ind) {
     if (!d)
 	return 0;
     //crash if converting from psize to usize will overflow
@@ -1826,23 +1845,23 @@ static inline int find_ind(spcl_dict *d, s8 name, usize* ind) {
     //step until we find an empty slot
     while (d->table[i].name.s) {
 	if (s8eq(name, d->table[i].name)) {
-	    *ind = i;
+	    *ind = (psize)i;
 	    return 1;
 	}
 	i = (i+step) & mask;
     }
-    *ind = i;
+    *ind = (psize)i;
     return 0;
 }
 
 /**
- * Grow the spcl_inst if necessary
+ * Grow the _context if necessary
  * returns: 1 if growth was performed
  */
-static inline int grow_dict(spcl_dict *d, vproc *vp) {
+static inline int grow_context(_context *d, vproc *vp) {
     if (d && d->n_memb*GROW_LOAD_DEN > con_size(d)*GROW_LOAD_NUM) {
 	//we need to keep the old dictionary so everything can be rehashed
-	spcl_dict newd;
+	_context newd;
 	newd.t_bits = d->t_bits+1;
 	newd.n_memb = 0;
 	newd.table = xmalloc(sizeof(_hash_item)*con_size(&newd), vp);
@@ -1853,12 +1872,16 @@ static inline int grow_dict(spcl_dict *d, vproc *vp) {
 	    //skip empty entries
 	    if (d->table[i].name.s == NULL)
 		continue;
-	    usize j;
+	    psize j;
 	    if (!find_ind(&newd, d->table[i].name, &j))
 		++newd.n_memb;
 	    newd.table[j] = d->table[i];
 	}
 	xfree(d->table, vp);
+	if (d->statics)
+	    newd.statics = xrealloc(d->statics, sizeof(spcl_val)*con_size(&newd), vp);
+	else
+	    newd.statics = NULL;
 	*d = newd;
 	return 1;
     }
@@ -1885,57 +1908,53 @@ static inline void setup_builtins(vproc *vp) {
     spcl_add_fn(spcl_print,	"print", vp);
     //TODO: this is a really dumb way of adding namespaces
     //math stuff
-    spcl_val tmp = spcl_make_inst("namespace", vp);
-    spcl_inst *math_c = tmp.val.c;
-    spcl_set_inst_valn(math_c, s8("pi"), 	spcl_make_num(M_PI), 0, vp);
-    spcl_set_inst_valn(math_c, s8("e"), 	spcl_make_num(M_E), 0, vp);
-    spcl_add_inst_fn(math_c, spcl_sin,	"sin", vp);
-    spcl_add_inst_fn(math_c, spcl_cos,	"cos", vp);
-    spcl_add_inst_fn(math_c, spcl_tan,	"tan", vp);
-    spcl_add_inst_fn(math_c, spcl_asin,	"asin", vp);
-    spcl_add_inst_fn(math_c, spcl_acos,	"acos", vp);
-    spcl_add_inst_fn(math_c, spcl_atan,	"atan", vp);
-    spcl_add_inst_fn(math_c, spcl_exp,	"exp", vp);
-    spcl_add_inst_fn(math_c, spcl_log,	"log", vp);
-    spcl_add_inst_fn(math_c, spcl_sqrt,	"sqrt", vp);
-    spcl_add_inst_fn(math_c, spcl_floor,	"floor", vp);
-    spcl_add_inst_fn(math_c, spcl_ceil,	"ceil", vp);
-    spcl_add_inst_fn(math_c, spcl_fabs,	"abs", vp);
+    spcl_val tmp = spcl_make_class("namespace", vp);
+    _context *math_c = tmp.val.c;
+    spcl_set_static_valn(math_c, s8("pi"), 	spcl_make_num(M_PI), 0, vp);
+    spcl_set_static_valn(math_c, s8("e"), 	spcl_make_num(M_E), 0, vp);
+    spcl_add_static_fn(math_c, spcl_sin,	"sin", vp);
+    spcl_add_static_fn(math_c, spcl_cos,	"cos", vp);
+    spcl_add_static_fn(math_c, spcl_tan,	"tan", vp);
+    spcl_add_static_fn(math_c, spcl_asin,	"asin", vp);
+    spcl_add_static_fn(math_c, spcl_acos,	"acos", vp);
+    spcl_add_static_fn(math_c, spcl_atan,	"atan", vp);
+    spcl_add_static_fn(math_c, spcl_exp,	"exp", vp);
+    spcl_add_static_fn(math_c, spcl_log,	"log", vp);
+    spcl_add_static_fn(math_c, spcl_sqrt,	"sqrt", vp);
+    spcl_add_static_fn(math_c, spcl_floor,	"floor", vp);
+    spcl_add_static_fn(math_c, spcl_ceil,	"ceil", vp);
+    spcl_add_static_fn(math_c, spcl_fabs,	"abs", vp);
     spcl_set_val("math", tmp, 0, vp);
-    tmp = spcl_make_inst("sys", vp);
-    spcl_set_inst_valn(tmp.val.c, s8("argv"), 	spcl_make_list(NULL, 0, vp), 0, vp);
+    tmp = spcl_make_class("sys", vp);
+    spcl_set_static_valn(tmp.val.c, s8("argv"), 	spcl_make_list(NULL, 0, vp), 0, vp);
     spcl_set_val("sys", tmp, 0, vp);
 }
 
-struct spcl_inst* make_spcl_inst(vproc *vp) {
-    spcl_inst *c = xmalloc(sizeof(spcl_inst), vp);
-    c->cls = xmalloc(sizeof(spcl_dict), vp);
-    init_spcl_dict(c->cls, vp);
+struct spcl_obj* make_spcl_obj(vproc *vp) {
+    spcl_obj *c = xmalloc(sizeof(spcl_obj), vp);
+    c->cls = xmalloc(sizeof(_context), vp);
+    init_context(c->cls, vp);
     c->vals = NULL;
     return c;
 }
 
-struct spcl_inst* copy_spcl_inst(spcl_inst *o, vproc *vp) {
+struct spcl_obj* copy_spcl_obj(spcl_obj *o, vproc *vp) {
     if (!o)
 	return NULL;
-    spcl_inst* c = xmalloc(sizeof(spcl_inst), vp);
-    c->cls = xmalloc(sizeof(spcl_dict), vp);
-    copy_spcl_dict(c->cls, o->cls, vp);
+    spcl_obj* c = xmalloc(sizeof(spcl_obj), vp);
+    c->cls = o->cls;
     for (size_t i = 0; i < c->cls->n_memb; ++i)
 	c->vals[i] = copy_spcl_val(o->vals[i], vp);
     return c;
 }
 
-void destroy_spcl_inst(spcl_inst *c, vproc *vp) {
-    if (!c)
+void destroy_spcl_obj(spcl_obj *self, vproc *vp) {
+    if (!self)
 	return;
-    //erase the hash table
-    cleanup_spcl_dict(c->cls, vp);
-    xfree(c->cls, vp);
-    for (size_t i = 0; i < c->cls->n_memb; ++i)
-	cleanup_spcl_val(c->vals+i, vp);
-    xfree(c->cls, vp);
-    xfree(c->vals, vp);
+    for (size_t i = 0; i < self->cls->n_memb; ++i)
+	cleanup_spcl_val(self->vals+i, vp);
+    xfree(self->vals, vp);
+    xfree(self, vp);
 }
 /**
  * Identify the keyword starting at rs->start up to rs->end. If a key is found, then rs->start is updated to the first character after the keyword.
@@ -2248,7 +2267,7 @@ spcl_local psize _tokenize(vproc *vp, read_state rs, optree_nd *nd, sm_state sta
     case SM_IN_NUM:
 	init_cnstnd(nd, ND_ISCNST, rs_to_numeric(&rs, vp));
 	if (nd->v.type == VAL_ERR) {
-	    *er = tmpv;
+	    *er = nd->v;
 	    memset(nd, 0, sizeof(optree_nd));
 	    return rs.end;
 	}
@@ -2572,7 +2591,7 @@ static inline unfold_res _list_def_unfold(vproc *vp, optree_nd *nd, usize *insts
 	    vp->stack[--vp->sp] = spcl_make_int(1);
 	//now we need to look up the variable name. It immediately goes out of scope, so we can temporarily overwrite other names
 	s8 lname = (s8){nd->r->l->v.val.s, nd->r->l->v.n_els};
-	usize ti;
+	psize ti;
 	find_ind(&vp->d, lname, &ti);
 	_hash_item old_item = vp->d.table[ti];
 	vp->d.table[ti].name = lname;
@@ -2823,7 +2842,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    ret = *asgn;
 	    if (!find_ind(&vp->d, str, &i)) {
 		//if there isn't already an element with that name we have to expand the table and add a member
-		if (grow_dict(&vp->d, vp))
+		if (grow_context(&vp->d, vp))
 		    find_ind(&vp->d, str, &i);
 		vp->d.table[i].name = s8dup(str, vp);
 		//we have to unfold the right side and push it to the stack
@@ -2883,18 +2902,38 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    //unfold the instance
 	    ret = unfold_optree(vp, nd->l, insts, n_insts, NULL, er);
 	    spcl_val tmpv = (ret.l == L_STK)? vp->stack[vp->sp+ret.v.st] : (ret.l == L_HEP)? *ret.v.hp : spcl_make_int(ret.v.st);
-	    if (tmpv.type != VAL_INST) {
+	    //we only lookup the member name during parsing since it must remain fixed in location later
+	    psize ti;
+	    if (tmpv.type == VAL_INST) {
+		if (!find_ind(tmpv.val.o->cls, rname, &ti)) {
+		    *er = spcl_make_err(E_NOTMEMB, vp, "unknown member %.*s", rname.n, rname.s);
+		    ret.type = VAL_ERR;
+		    return ret;
+		}
+		ti = tmpv.val.o->cls->table[ti].ind;
+		ret.type = tmpv.val.o->vals[ti].type;
+	    } else if (tmpv.type == VAL_CLASS) {
+		if (!find_ind(tmpv.val.c, rname, &ti)) {
+		    *er = spcl_make_err(E_NOTMEMB, vp, "unknown member %.*s", rname.n, rname.s);
+		    ret.type = VAL_ERR;
+		    return ret;
+		}
+		ti = tmpv.val.c->table[ti].ind;
+		if (ti >= 0) {
+		    *er = spcl_make_err(E_BAD_TYPE, vp, "cannot access non-static member %.*s", rname.n, rname.s);
+		    ret.type = VAL_ERR;
+		    return ret;
+		}
+		ti = -1 - ti;
+		//TODO: figure out ret.type
+		//ret.type = tmpv.val.c->vals[ti].type;
+	    } else {
 		*er = spcl_make_err(E_BAD_TYPE, vp, "cannot access member %.*s from type %s", rname.n, rname.s, valnames[tmpv.type]);
 		ret.type = VAL_ERR;
 		return ret;
 	    }
-	    usize ti;
-	    if (!find_ind(tmpv.val.c->cls, rname, &ti)) {
-		*er = spcl_make_err(E_NOTMEMB, vp, "unknown member %.*s", rname.n, rname.s);
-		ret.type = VAL_ERR;
-		return ret;
-	    }
-	    ti = tmpv.val.c->cls->table[ti].ind;
+	    //finally, we're ready to read or write
+
 	    usize n_before = ret.n_written;
 	    if (asgn) {
 		//if it's an assignment we have to ensure that the rvalue is at the top of the stack before the WEA
@@ -2903,7 +2942,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 		    insts[ret.n_written++] = gen_op2(OP_PUSH, lr.l);
 		    insts[ret.n_written++] = loc_inst(lr, ret.n_pushed);
 		}
-		insts[ret.n_written++] = gen_op3(OP_WEA, lr.l, L_LIT);
+		insts[ret.n_written++] = gen_op3(OP_WEA, ret.l, L_LIT);
 		insts[ret.n_written++] = loc_inst(ret, 0);
 		insts[ret.n_written++] = ti;
 	    } else {
@@ -2911,11 +2950,11 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 		insts[ret.n_written++] = loc_inst(ret, 0);
 		insts[ret.n_written++] = ti;
 		ret.l = L_STK;
-		ret.type = tmpv.val.c->vals[ti].type;
 		ret.v.st = 0;
 		++ret.n_pushed;
 	    }
 	    vproc_exec(vp, insts, ret.n_written, n_before);
+	    ret.type = vp->stack[vp->sp].type;
 	    //TODO: allow constant propagation
 	    return ret;
 	    /*ret.n_written = lr.n_written;
@@ -2971,7 +3010,7 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
 	    //now we need to assign the value
 	    if (!find_ind(&vp->d, lname, &ti)) {
 		//if there isn't already an element with that name we have to expand the table and add a member
-		if (grow_dict(&vp->d, vp))
+		if (grow_context(&vp->d, vp))
 		    find_ind(&vp->d, lname, &ti);
 		vp->d.table[ti].name = s8dup(lname, vp);
 		//we have to unfold the right side and push it to the stack
@@ -3063,11 +3102,11 @@ unfold_res unfold_optree(vproc *vp, optree_nd *nd, usize *insts, usize n_insts, 
     return ret;
 }
 //forward declare so that helpers can call
-static inline spcl_val spcl_parse_line_rs(spcl_inst* c, read_state rs, psize* new_end, spcl_key start_key);
+//static inline spcl_val spcl_parse_line_rs(spcl_obj* c, read_state rs, psize* new_end, spcl_key start_key);
 static inline spcl_val spcl_read_lines_block(vproc *vp, read_state rs) {
     //TODO: give this an actual buffer
     usize inst_buf[TMP_INST_SIZE];
-    spcl_val tmp;
+    spcl_val tmp = (spcl_val){0};
     while (rs.start < rs.end) {
 	optree_nd *nd = make_nd(NULL, 0, &vp->a);
 	read_state old_rs = rs;
@@ -3147,7 +3186,7 @@ static inline spcl_val _spcl_index(spcl_val v, spcl_val ind, vproc *vp) {
 /**
  * An alternative to lookup which only considers the first n bytes in str
  */
-/*static inline spcl_val spcl_find_rs(spcl_inst* c, read_state rs) {
+/*static inline spcl_val spcl_find_rs(spcl_obj* c, read_state rs) {
     psize dot_loc = strchr_block_rs(rs.b, rs.start, rs.end, '.');
     psize ref_loc = strchr_block_rs(rs.b, rs.start, rs.end, BEG_SQR);//]
     if (dot_loc == rs.end && ref_loc == rs.end) {
@@ -3163,7 +3202,7 @@ static inline spcl_val _spcl_index(spcl_val v, spcl_val ind, vproc *vp) {
 	//reaching this point in execution means the matching entry wasn't found
 	return spcl_make_none();
     } else if (dot_loc < ref_loc) {
-	//if there was a dot, access spcl_inst members
+	//if there was a dot, access spcl_obj members
 	spcl_val sub_con = spcl_find_rs(c, make_read_state(rs.b, rs.start, dot_loc));
 	if (sub_con.type != VAL_INST)
 	    return spcl_make_err(E_BAD_TYPE, vp, "cannot access member from non-instance type %s", valnames[sub_con.type]);
@@ -3182,7 +3221,7 @@ static inline spcl_val _spcl_index(spcl_val v, spcl_val ind, vproc *vp) {
 /**
  * similar to set_spcl_valn(), but read in place from a read state
  */
-/*static inline spcl_val set_spcl_val_rs(struct spcl_inst* c, read_state rs, spcl_val p_val) {
+/*static inline spcl_val set_spcl_val_rs(struct spcl_obj* c, read_state rs, spcl_val p_val) {
     psize dot_loc = strchr_block_rs(rs.b, rs.start, rs.end, '.');
     psize ref_loc = strchr_block_rs(rs.b, rs.start, rs.end, BEG_SQR);//]
     //if there are no dereferences, just access the table directly
@@ -3191,7 +3230,7 @@ static inline spcl_val _spcl_index(spcl_val v, spcl_val ind, vproc *vp) {
 	spcl_set_valn(c, str.s, str.n, p_val, 0);
 	return p_val;
     } else if (dot_loc < ref_loc) {
-	//access spcl_inst members
+	//access spcl_obj members
 	spcl_val sub_con = spcl_find_rs(c, make_read_state(rs.b, rs.start, dot_loc));
 	if (sub_con.type != VAL_INST)
 	    return spcl_make_err(E_BAD_TYPE, vp, "cannot access member from non instance type %s", valnames[sub_con.type]);
@@ -3253,7 +3292,7 @@ static inline int _get_op_n_insts(usize inst) {
     }
 }
 spcl_local spcl_val* _val_from_inst(vproc *vp, short inst_loc, usize inst, spcl_val *sto) {
-    spcl_val *ret;
+    spcl_val *ret = NULL;
     switch (inst_loc) {
     case L_LIT: *sto = spcl_make_int(inst);ret = sto;		break;
     case L_STK: ret = vp->stack+vp->sp+inst;			break;
@@ -3284,14 +3323,14 @@ vproc *make_vproc() {
     vp->pc = 0;
     vp->sp = getpagesize();
     init_arena(&vp->a, VP_ARENA_N, vp);
-    init_spcl_dict(&vp->d, vp);
+    init_context(&vp->d, vp);
     setup_builtins(vp);
     return vp;
 }
 void destroy_vproc(vproc *vp) {
     if (!vp)
 	return;
-    cleanup_spcl_dict(&vp->d, vp);
+    cleanup_context(&vp->d, vp);
     cleanup_arena(&vp->a, vp);
     munmap(vp->stack, sizeof(spcl_val)*getpagesize());
     munmap(vp->heap, sizeof(spcl_val)*getpagesize());
@@ -3306,7 +3345,7 @@ static inline void _pshcpy(vproc *vp, spcl_val v) {
  * n_insts: the length of insts
  */
 spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts, usize pc) {
-    s8 *name;
+    //s8 *name;
     spcl_val tmpd, tmps, tmpa;
     spcl_val *dst, *src, *arg;
     short code, blen, meta;
@@ -3402,7 +3441,7 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts, usize pc) {
 	    meta = op_meta(insts[pc]);
 	    if (meta > 1) {
 		tmpa = vp->stack[vp->sp];
-		memmove(vp->stack+vp->sp, vp->stack+vp->sp+1, sizeof(spcl_inst)*meta);
+		memmove(vp->stack+vp->sp, vp->stack+vp->sp+1, sizeof(spcl_val)*meta);
 		vp->stack[vp->sp+meta-1] = tmpa;
 	    }
 	    pc += 1;
@@ -3415,7 +3454,9 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts, usize pc) {
 	    else if (dst->type == VAL_ARRAY)
 		vp->stack[--vp->sp] = spcl_make_num(dst->val.a[src->val.i]);
 	    else if (dst->type == VAL_INST)
-		vp->stack[--vp->sp] = dst->val.c->vals[src->val.i];
+		vp->stack[--vp->sp] = dst->val.o->vals[src->val.i];
+	    else if (dst->type == VAL_CLASS)
+		vp->stack[--vp->sp] = dst->val.c->statics[src->val.i];
 	    pc += 3;
 	break;
 	case OP_WEA:
@@ -3427,7 +3468,9 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts, usize pc) {
 		tmpa = vp->stack[vp->sp++];
 		dst->val.a[src->val.i] = tmpa.val.x;
 	    } else if (dst->type == VAL_INST) {
-		dst->val.c->vals[src->val.i] = vp->stack[vp->sp++];
+		dst->val.o->vals[src->val.i] = vp->stack[vp->sp++];
+	    } else if (dst->type == VAL_CLASS) {
+		dst->val.c->statics[src->val.i] = vp->stack[vp->sp++];
 	    }
 	    pc += 3;
 	break;
@@ -3609,10 +3652,10 @@ void spcl_set_valn(vproc *vp, s8 p_name, spcl_val p_val, int copy) {
 	snprintf(tmp, SPCL_STR_BSIZE, "\e_%lu", vp->d.n_memb);
 	spcl_set_valn(vp, s8(tmp), p_val, copy);
     }
-    usize ti;
+    psize ti;
     if (!find_ind(&vp->d, p_name, &ti)) {
 	//if there isn't already an element with that name we have to expand the table and add a member
-	if (grow_dict(&vp->d, vp))
+	if (grow_context(&vp->d, vp))
 	    find_ind(&vp->d, p_name, &ti);
 	vp->d.table[ti].name = s8dup(p_name, vp);
 	vp->d.table[ti].ind = --vp->sp;
@@ -3625,26 +3668,26 @@ void spcl_set_valn(vproc *vp, s8 p_name, spcl_val p_val, int copy) {
 	*tmpv = (copy)? copy_spcl_val(p_val, vp) : p_val;
     }
 }
-void spcl_set_inst_valn(spcl_inst *c, s8 p_name, spcl_val p_val, int copy, vproc *vp) {
+void spcl_set_static_valn(_context *c, s8 p_name, spcl_val p_val, int copy, vproc *vp) {
     //generate a fake name if none was provided
     if (!p_name.s || p_name.n == 0) {
 	char tmp[SPCL_STR_BSIZE];
-	snprintf(tmp, SPCL_STR_BSIZE, "\e_%lu", c->cls->n_memb);
-	spcl_set_inst_valn(c, s8(tmp), p_val, copy, vp);
+	snprintf(tmp, SPCL_STR_BSIZE, "\e_%lu", c->n_statics);
+	spcl_set_static_valn(c, s8(tmp), p_val, copy, vp);
     }
-    usize ti;
-    if (!find_ind(c->cls, p_name, &ti)) {
+    psize ti;
+    if (!find_ind(c, p_name, &ti)) {
 	//if there isn't already an element with that name we have to expand the table and add a member
-	if (grow_dict(c->cls, vp))
-	    find_ind(c->cls, p_name, &ti);
-	c->cls->table[ti].name = s8dup(p_name, vp);
-	c->cls->table[ti].ind = c->cls->n_memb++;
+	if (grow_context(c, vp))
+	    find_ind(c, p_name, &ti);
+	c->table[ti].name = s8dup(p_name, vp);
+	c->table[ti].ind = -(++c->n_statics);
 	//finally, we have to grow the value table
-	c->vals = xrealloc(c->vals, sizeof(spcl_val)*c->cls->n_memb, vp);
-	c->vals[c->cls->table[ti].ind] = (copy)? copy_spcl_val(p_val, vp) : p_val;
-    } else {
+	c->statics = xrealloc(c->statics, sizeof(spcl_val)*c->n_statics, vp);
+	c->statics[c->n_statics-1] = (copy)? copy_spcl_val(p_val, vp) : p_val;
+    } else if (c->table[ti].ind < 0){ //static variables MUST have an index below zero (that's how we indicate staticness)
 	//otherwise we need to cleanup the old spcl_val and add the new
-	spcl_val *tmpv = c->vals + c->cls->table[ti].ind;
+	spcl_val *tmpv = c->statics - 1 - c->table[ti].ind;
 	cleanup_spcl_val(tmpv, NULL);
 	*tmpv = (copy)? copy_spcl_val(p_val, vp) : p_val;
     }
@@ -3656,7 +3699,7 @@ void spcl_set_inst_valn(spcl_inst *c, s8 p_name, spcl_val p_val, int copy, vproc
     }
     return c->table[ti].v;
 }*/
-int spcl_find_object(vproc *vp, const char* str, const char* typename, spcl_inst** sto) {
+int spcl_find_object(vproc *vp, const char* str, const char* typename, spcl_obj** sto) {
     spcl_val vobj = spcl_parse_line(vp, str);
     if (vobj.type != VAL_INST)
 	return -1;
@@ -3670,7 +3713,8 @@ int spcl_find_object(vproc *vp, const char* str, const char* typename, spcl_inst
     spcl_val tmp = spcl_parse_line(vp, tstr);
     if (tmp.type != VAL_STR || strncmp(tmp.val.s, typename, tmp.n_els))
 	return -2;
-    if (sto) *sto = vobj.val.c;
+    if (sto)
+	*sto = vobj.val.o;
     return 0;
 }
 int spcl_find_c_iarray(vproc *vp, const char* str, int* sto, size_t n) {
@@ -3790,7 +3834,7 @@ int spcl_find_float(vproc *vp, const char* str, double* sto) {
     }
     return spcl_make_err(E_BAD_SYNTAX, vp, "something that should be impossible happened! congratulations!");
 }
-static inline spcl_val spcl_read_lines_block(struct spcl_inst* c, read_state block_rs) {
+static inline spcl_val spcl_read_lines_block(struct spcl_obj* c, read_state block_rs) {
     spcl_val ret;
     psize end;
     read_state rs = make_read_state(block_rs.b, block_rs.start, block_rs.end);
@@ -3869,7 +3913,7 @@ spcl_val spcl_read_lines(vproc *vp, const spcl_fstream* b) {
 vproc *spcl_read_file(const char* fname, int argc, const char** argv) {
     //read command line arguments
     spcl_val ret = {0};
-    //create a new spcl_inst
+    //create a new vproc
     vproc *vp = make_vproc();
     //write the prefix to start the argument list
     const char *prefix = "sys.argv=[";
@@ -3948,7 +3992,7 @@ vproc *spcl_read_file(const char* fname, int argc, const char** argv) {
  * new_end: we must track the final location so that the caller fast-forwards to the end of the declaration
  * returns: a spcl_val with the function set
  */
-/*static inline spcl_val spcl_make_fn_rs(struct spcl_inst* c, read_state rs, psize* arg_inds, size_t n_args, psize* new_end) {
+/*static inline spcl_val spcl_make_fn_rs(struct spcl_obj* c, read_state rs, psize* arg_inds, size_t n_args, psize* new_end) {
     //ensure that we can store the end location
     if (!new_end)
 	return spcl_make_err(E_BAD_SYNTAX, vp, "declared function without room to grow");
@@ -3979,7 +4023,7 @@ vproc *spcl_read_file(const char* fname, int argc, const char** argv) {
     sto.val.f->code_lines = make_read_state(rs.b, open_ind+1, close_ind);
     sto.val.f->exec = NULL;
     //we change the parent in spcl_uf_eval. However, calling with NULL indicates no parent, so we must pass a dummy
-    sto.val.f->fn_scope = make_spcl_inst(c);
+    sto.val.f->fn_scope = make_spcl_obj(c);
     return sto;
 }*/
 spcl_uf* make_spcl_uf_ex(lib_call p_exec, vproc *vp) {
@@ -4001,7 +4045,7 @@ spcl_uf* copy_spcl_uf(const spcl_uf* o, vproc *vp) {
 void destroy_spcl_uf(spcl_uf* uf, vproc *vp) {
     cleanup_spcl_fn_call(&(uf->call_sig));
     if (uf->fn_scope)
-	destroy_spcl_inst(uf->fn_scope, vp);
+	cleanup_context(uf->fn_scope, vp);
     xfree(uf, vp);
 }
 spcl_val spcl_uf_eval(spcl_uf* uf, spcl_fn_call call, vproc *vp) {

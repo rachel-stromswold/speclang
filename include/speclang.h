@@ -35,7 +35,6 @@
 
 //forward declarations
 struct spcl_val;
-//struct spcl_inst;
 struct spcl_uf;
 struct spcl_fn_call;
 struct _vproc;
@@ -45,7 +44,7 @@ typedef struct spcl_val spcl_val;
 typedef struct spcl_val (*lib_call)(struct spcl_fn_call, struct _vproc *vp);
 
 typedef enum { E_SUCCESS, E_NOFILE, E_LACK_TOKENS, E_BAD_SYNTAX, E_BAD_VALUE, E_BAD_TYPE, E_NOMEM, E_NAN, E_UNDEF, E_NOTMEMB, E_OUT_OF_RANGE, E_ASSERT, N_ERRORS } parse_ercode;
-typedef enum {VAL_UNDEF, VAL_ERR, VAL_INT, VAL_NUM, VAL_STR, VAL_ARRAY, VAL_MAT, VAL_LIST, VAL_FN, VAL_INST, _VAL_STACKREF, _VAL_GLOBREF, N_VALTYPES} valtype;
+typedef enum {VAL_UNDEF, VAL_ERR, VAL_INT, VAL_NUM, VAL_STR, VAL_ARRAY, VAL_MAT, VAL_LIST, VAL_FN, VAL_INST, VAL_CLASS, _VAL_STACKREF, _VAL_GLOBREF, N_VALTYPES} valtype;
 //helper classes and things
 typedef enum {BLK_UNDEF, BLK_MISC, BLK_INVERT, BLK_TRANSFORM, BLK_DATA, BLK_ROOT, BLK_COMPOSITE, BLK_FUNC_DEC, BLK_LITERAL, BLK_COMMENT, BLK_SQUARE, BLK_QUOTE, BLK_QUOTE_SING, BLK_PAREN, BLK_CURLY, N_BLK_TYPES} blk_type;
 
@@ -53,7 +52,7 @@ typedef enum {BLK_UNDEF, BLK_MISC, BLK_INVERT, BLK_TRANSFORM, BLK_DATA, BLK_ROOT
  * Macro to set a value while automagically calculating the string length
  */
 #define spcl_set_val(name,val,copy,vp) spcl_set_valn(vp, s8(name), val, copy)
-#define spcl_set_sub_val(c,name,val,copy,vp) spcl_set_inst_valn(c, s8(name), val, copy, vp)
+#define spcl_set_sub_val(c,name,val,copy,vp) spcl_set_static_valn(c, s8(name), val, copy, vp)
 #define make_spcl_fstream(name) make_spcl_fstreamn(name, strlen(name))
 /**
  * provides a handy macro which wraps get_sigerr and aborts execution of a function if an invalid signature was detected
@@ -73,13 +72,13 @@ typedef enum {BLK_UNDEF, BLK_MISC, BLK_INVERT, BLK_TRANSFORM, BLK_DATA, BLK_ROOT
     spcl_val er = get_sigerr(FN_CALL, MIN_ARGS, SIGLEN(SIGNATURE), SIGNATURE, VP); \
     if (er.type == VAL_ERR) return er
 /**
- * register a function FN_CALL to the spcl_inst CON with the name NAME
- * CON: the spcl_inst to add the function to
+ * register a function FN_CALL to the _context CON with the name NAME
+ * CON: the _context to add the function to
  * FN_CALL: the C function to add
  * NAME: the name of the function when calling from a spcl script
  */
 #define spcl_add_fn(fn_call,name,vp) spcl_set_valn(vp, s8(name), spcl_make_fn(name,1,&fn_call,vp), 0);
-#define spcl_add_inst_fn(c,fn_call,name,vp) spcl_set_inst_valn(c, s8(name), spcl_make_fn(name,1,&fn_call,vp), 0, vp);
+#define spcl_add_static_fn(c,fn_call,name,vp) spcl_set_static_valn(c, s8(name), spcl_make_fn(name,1,&fn_call,vp), 0, vp);
 
 /** ======================================================== utility functions ======================================================== **/
 
@@ -142,21 +141,23 @@ void reset(arena *a);
 /** ============================ vproc ============================ **/
 
 typedef struct {
-    s8 name;
-    psize ind;
+    s8 name;		//name
+    psize ind;		//index on the stack or negative if this is a static value
 } _hash_item;
 
 typedef struct {
     _hash_item *table;
+    spcl_val *statics;
     usize n_memb;
     usize t_bits;
-} spcl_dict;
+    usize n_statics;
+} _context;
 
 //a virtual process
 typedef struct _vproc {
     void *heap;
     spcl_val *stack;
-    spcl_dict d;
+    _context d;
     arena a;
     usize pc;		//program counter
     psize sp;		//stack pointer
@@ -166,7 +167,7 @@ typedef struct _vproc {
  * Initialize a vproc struct by reading from a file
  * fname: the name of the file to read
  * argc: the number arguments
- * argv: an array of arguments taken from the command-line. Note that callers should not directly pass argc,argv from int main(). Rather, argv should only include valid spclang commands. If you know that spclang commands start at the index i, then you should call spcl_inst_from_file(fname, argc-i, argv+(size_t)i).
+ * argv: an array of arguments taken from the command-line. Note that callers should not directly pass argc,argv from int main(). Rather, argv should only include valid spclang commands. If you know that spclang commands start at the index i, then you should call spcl_obj_from_file(fname, argc-i, argv+(size_t)i).
  * returns: on success, a pointer to a vproc which should be destroyed with a call to destroy_vproc, otherwise NULL is returned and destroy_vproc() is still safe
  */
 vproc *spcl_read_file(const char* fname, int argc, const char** argv);
@@ -184,7 +185,7 @@ void destroy_vproc(vproc *vp);
  * name: the name of the variable to set
  * new_val: the spcl_val to set the variable to
  * copy: This is a boolean which, if true, performs a deep copy of new_val. Otherwise, only a shallow copy (move) is performed.
- * move_assign: If set to true, then the spcl_val is directly moved into the spcl_inst. This can save some time.
+ * move_assign: If set to true, then the spcl_val is directly moved into the spcl_obj. This can save some time.
  */
 void spcl_set_valn(vproc *vp, s8 name, spcl_val new_val, int copy);
 /**
@@ -199,14 +200,14 @@ spcl_val vproc_exec(vproc *vp, usize* insts, usize n_insts, usize pc);
 spcl_local spcl_val* _val_from_inst(vproc *vp, short inst_loc, usize inst, spcl_val *sto);
 /**
  * Given a string str, return a spcl_val corresponding to the expression str
- * c: the spcl_inst to use when looking for variables and functions
+ * vp: the vproc to use when looking for variables and functions
  * str: the string expression to parse
  * returns: a spcl_val with the resultant expression
  */
 spcl_val spcl_parse_line(vproc *vp, const char* str);
 /**
  * Test whether the string str evaluates to true when using c.
- * c: the spcl_inst to use when looking for variables and functions
+ * vp: the vproc to use when looking for variables and functions
  * str: the string expression to parse
  * returns: 0 if str evaluated to false or an error occurred during parsing. Otherwise, 1 is returned.
  */
@@ -225,9 +226,10 @@ union V {
     int i;
     double x;
     double* a;
+    _context *c;
     struct spcl_val* l;
     struct spcl_uf* f;
-    struct spcl_inst* c;
+    struct spcl_obj* o;
 };
 
 struct spcl_val {
@@ -276,7 +278,11 @@ spcl_val spcl_make_fn(const char* name, psize n_ret, lib_call p_exec, vproc *vp)
  * p: the parent of the current instance (i.e. its owner
  * s: the name of the type
  */
-spcl_val spcl_make_inst(const char* s, vproc *vp);
+spcl_val spcl_make_class(const char* s, vproc *vp);
+/**
+ * make an object of the type v.val.c
+ */
+spcl_val spcl_make_obj(spcl_val cls, vproc *vp);
 /**
  * Compare two spcl_vals if appropriate, in a manner similar to strcmp.
  * returns: 0 if a==b, a positive spcl_val if a>b, and a negative spcl_val if a<b. If no comparison is possible, undefined is returned.
@@ -390,27 +396,27 @@ typedef struct spcl_fn_call {
 spcl_fn_call copy_spcl_fn_call(const spcl_fn_call o);
 void cleanup_spcl_fn_call(spcl_fn_call* o);
 
-/** ============================ spcl_inst ============================ **/
+/** ============================ spcl_obj ============================ **/
 
-struct spcl_inst {
-    spcl_dict *cls;
+struct spcl_obj {
+    _context *cls;
     spcl_val *vals;
 };
-typedef struct spcl_inst spcl_inst;
+typedef struct spcl_obj spcl_obj;
 
 /**
- * make an empty spcl_inst. The result must be destroyed using destroy_inst().
- * parent: the parent of this spcl_inst so that we can look up in scope (i.e. a function can access global variables)
+ * make an empty spcl_obj. The result must be destroyed using destroy_inst().
+ * parent: the parent of this spcl_obj so that we can look up in scope (i.e. a function can access global variables)
  */
-struct spcl_inst *make_spcl_inst(vproc *vp);
+spcl_obj *make_spcl_obj(vproc *vp);
 /**
- * Create a deep copy of the spcl_inst o and return the result. The result must be destroyed using destroy_inst().
+ * Create a deep copy of the spcl_obj o and return the result. The result must be destroyed using destroy_inst().
  */
-struct spcl_inst *copy_spcl_inst(spcl_inst *o, vproc *vp);
+spcl_obj *copy_spcl_obj(spcl_obj *o, vproc *vp);
 /**
- * cleanup the spcl_inst c
+ * cleanup the spcl_obj c
  */
-void destroy_spcl_inst(spcl_inst *c, vproc *vp);
+void destroy_spcl_obj(spcl_obj *c, vproc *vp);
 /**
  * set the value of the instance c to a name p_name and value p_val
  * c: the instance to set
@@ -419,25 +425,25 @@ void destroy_spcl_inst(spcl_inst *c, vproc *vp);
  * copy: whether or not the value should be copied
  * vp: the process on which c was allocated
  */
-void spcl_set_inst_valn(spcl_inst *c, s8 p_name, spcl_val p_val, int copy, vproc *vp);
+void spcl_set_static_valn(_context *c, s8 p_name, spcl_val p_val, int copy, vproc *vp);
 /**
- * Search the spcl_inst for the variable with the matching name.
+ * Search the spcl_obj for the variable with the matching name.
  * name: the name of the variable to set
  * returns: the matching spcl_val, no deep copies are performed
  */
-spcl_val spcl_find(spcl_inst *c, s8 name);
+spcl_val spcl_find(spcl_obj *c, s8 name);
 /**
- * Lookup the object named str in c and save the resulting spcl_inst to sto
- * c: the spcl_inst to search
+ * Lookup the object named str in c and save the resulting spcl_obj to sto
+ * vp: the vproc to search
  * str: the name to lookup
  * type: force the object to match the specified typename
  * sto: overwrite this information to save
  * returns: 0 on success or a negative spcl_val if an error occurred (-1 indicates no match, -2 indicates match of the wrong type)
  */
-int spcl_find_object(vproc *vp, const char* str, const char* type, spcl_inst** sto);
+int spcl_find_object(vproc *vp, const char* str, const char* type, spcl_obj **sto);
 /**
  * Lookup the spcl_val named str in c and write the first n elements of the resulting list/array to sto
- * c: the spcl_inst to search
+ * c: the spcl_obj to search
  * str: the name to lookup
  * sto: the array to save to. At most n values are written. If the spcl_array found has m elements and m<n, then all values sto[i] with i>=m are not modified.
  * n: the length of sto
@@ -446,7 +452,7 @@ int spcl_find_object(vproc *vp, const char* str, const char* type, spcl_inst** s
 int spcl_find_c_iarray(vproc *vp, const char* str, int* sto, size_t n);
 /**
  * Lookup the spcl_val named str in c and write the first n elements of the resulting list/array to sto
- * c: the spcl_inst to search
+ * vp: the vproc to search
  * str: the name to lookup
  * sto: the array to save to. At most n values are written. If the spcl_array found has m elements and m<n, then all values sto[i] with i>=m are not modified.
  * n: the length of sto
@@ -455,7 +461,7 @@ int spcl_find_c_iarray(vproc *vp, const char* str, int* sto, size_t n);
 int spcl_find_c_uarray(vproc *vp, const char* str, unsigned* sto, size_t n);
 /**
  * Lookup the spcl_val named str in c and write the first n elements of the resulting list/array to sto
- * c: the spcl_inst to search
+ * vp: the vproc to search
  * str: the name to lookup
  * sto: the array to save to. At most n values are written. If the spcl_array found has m elements and m<n, then all values sto[i] with i>=m are not modified.
  * n: the length of sto
@@ -464,7 +470,7 @@ int spcl_find_c_uarray(vproc *vp, const char* str, unsigned* sto, size_t n);
 int spcl_find_c_darray(vproc *vp, const char* str, double* sto, size_t n);
 /**
  * Lookup the spcl_val named str in c and write the string sto
- * c: the spcl_inst to search
+ * vp: the vproc to search
  * str: the name to lookup
  * sto: the array to save to (this is guaranteed to be null terminated after a call)
  * n: the length of sto
